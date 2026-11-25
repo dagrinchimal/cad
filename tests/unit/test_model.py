@@ -174,9 +174,9 @@ def test_forward_compatibility_preserves_unknown_data(tmp_path):
     with zipfile.ZipFile(path) as z:
         manifest = json.loads(z.read("manifest.json"))
         data = json.loads(z.read("document.json"))
-    manifest["format_version"] = "1.4.0"
+    manifest["format_version"] = "1.9.0"
     manifest["new_manifest_field"] = 1
-    data["constraints"] = [{"kind": "parallel"}]
+    data["future_table"] = [{"kind": "wormhole"}]
     data["entities"].append({"type": "hologram", "handle": 999, "layer": "0"})
     newer = str(tmp_path / "newer.cadz")
     with zipfile.ZipFile(newer, "w") as z:
@@ -191,7 +191,7 @@ def test_forward_compatibility_preserves_unknown_data(tmp_path):
         data3 = json.loads(z.read("document.json"))
         m3 = json.loads(z.read("manifest.json"))
         assert z.read("solids/1.brep") == b"BREP"
-    assert data3["constraints"] == [{"kind": "parallel"}]
+    assert data3["future_table"] == [{"kind": "wormhole"}]
     assert any(e["type"] == "hologram" for e in data3["entities"])
     assert m3["new_manifest_field"] == 1
 

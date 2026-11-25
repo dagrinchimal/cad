@@ -70,21 +70,45 @@ class CanvasEventsMixin:
             self.client.on_resize(self.width(), self.height())
 
 
+class ViewportView:
+    """Where a layout viewport shows model space: a screen clip rectangle and an equivalent view."""
+
+    def __init__(self, clip: tuple[float, float, float, float], cx: float, cy: float, scale: float,
+                 width: int, height: int) -> None:
+        self.clip = clip              # x, y, w, h in logical pixels
+        self.cx, self.cy, self.scale = cx, cy, scale
+        self.width, self.height = width, height
+
+
 class SceneData:
-    """Everything a canvas draws besides the overlay."""
+    """Everything a canvas draws besides the overlay.
+
+    Segment arrays have 12 floats per row (see render.scene); fill arrays have 6 per triangle vertex.
+    In a layout, `scene`/`scene_fill` hold the paper-space objects, `underlay_fill` the sheet, and
+    `model`/`model_fill` are drawn once per entry of `viewports`.
+    """
 
     def __init__(self) -> None:
         empty = np.zeros((0, 12), dtype=np.float32)
+        empty_f = np.zeros((0, 6), dtype=np.float32)
         self.scene = empty
+        self.scene_fill = empty_f
         self.grid = empty
         self.highlight = empty
+        self.highlight_fill = empty_f
         self.preview = empty
+        self.preview_fill = empty_f
+        self.underlay_fill = empty_f
+        self.model = empty
+        self.model_fill = empty_f
+        self.viewports: list[ViewportView] = []
         self.origin = (0.0, 0.0)
         self.linetypes: tuple[list[float], list[float], list[int]] = ([0.0] * 256, [0.0] * 32, [0] * 32)
         self.global_ltscale = 1.0
         self.background = QColor(33, 40, 48)
         self.scene_version = 0
         self.grid_version = 0
+        self.model_version = 0
 
 
 def renderer_preference() -> str:

@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import numpy as np
-from PySide6.QtCore import QLineF, Qt
-from PySide6.QtGui import QColor, QImage, QPainter, QPen
+from PySide6.QtCore import QLineF, QPointF, QRectF, Qt
+from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen, QPolygonF
 from PySide6.QtWidgets import QWidget
 
 from .canvas_base import CanvasEventsMixin, SceneData
@@ -51,6 +51,41 @@ def draw_instances(painter: QPainter, inst: np.ndarray, data: SceneData, view, d
         painter.drawLines(lines)
 
 
+def draw_fills(painter: QPainter, tris: np.ndarray, data: SceneData, view) -> None:
+    if len(tris) == 0:
+        return
+    ox, oy = data.origin
+    s = view.scale
+    hw, hh = view.width / 2, view.height / 2
+    xs = (tris[:, 0] + ox - view.cx) * s + hw
+    ys = hh - (tris[:, 1] + oy - view.cy) * s
+    cols = tris[:, 2:6].reshape(-1, 3, 4)[:, 0, :]
+    keys, inverse = np.unique(cols, axis=0, return_inverse=True)
+    inverse = inverse.reshape(-1)
+    painter.setPen(Qt.PenStyle.NoPen)
+    xs3, ys3 = xs.reshape(-1, 3), ys.reshape(-1, 3)
+    for k, key in enumerate(keys):
+        path = QPainterPath()
+        path.setFillRule(Qt.FillRule.WindingFill)
+        for i in np.nonzero(inverse == k)[0]:
+            path.addPolygon(QPolygonF([QPointF(xs3[i, j], ys3[i, j]) for j in range(3)]))
+        painter.setBrush(QColor.fromRgbF(*(float(c) for c in key)))
+        painter.drawPath(path)
+
+
+class _Shim:
+    def __init__(self, cx, cy, scale, width, height):
+        self.cx, self.cy, self.scale, self.width, self.height = cx, cy, scale, width, height
+
+
+def viewport_shim(vp, widget_w: float, widget_h: float) -> _Shim:
+    """A view whose window center lines up with the viewport's clip-rectangle center."""
+    x, y, w, h = vp.clip
+    shift_x = (x + w / 2 - widget_w / 2) / vp.scale
+    shift_y = -(y + h / 2 - widget_h / 2) / vp.scale
+    return _Shim(vp.cx - shift_x, vp.cy - shift_y, vp.scale, widget_w, widget_h)
+
+
 class PainterCanvas(CanvasEventsMixin, QWidget):
     backend_name = "Software"
 
@@ -77,9 +112,21 @@ class PainterCanvas(CanvasEventsMixin, QWidget):
         img.fill(self.data.background)
         p = QPainter(img)
         p.setRenderHint(QPainter.RenderHint.Antialiasing, False)
-        draw_instances(p, self.data.grid, self.data, self.view)
+        d = self.data
+        draw_fills(p, d.underlay_fill, d, self.view)
+        draw_instances(p, d.grid, d, self.view)
+        for vp in d.viewports:
+            p.save()
+            p.setClipRect(QRectF(*vp.clip))
+            shim = viewport_shim(vp, self.width(), self.height())
+            draw_fills(p, d.model_fill, d, shim)
+            p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            draw_instances(p, d.model, d, shim)
+            p.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+            p.restore()
+        draw_fills(p, d.scene_fill, d, self.view)
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        draw_instances(p, self.data.scene, self.data, self.view)
+        draw_instances(p, d.scene, d, self.view)
         p.end()
         return img
 
@@ -93,7 +140,9 @@ class PainterCanvas(CanvasEventsMixin, QWidget):
             self._cache = self._render_cache()
         p.drawImage(0, 0, self._cache)
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        draw_fills(p, self.data.highlight_fill, self.data, self.view)
         draw_instances(p, self.data.highlight, self.data, self.view)
+        draw_fills(p, self.data.preview_fill, self.data, self.view)
         draw_instances(p, self.data.preview, self.data, self.view)
         if self.client:
             self.client.paint_overlay(p)

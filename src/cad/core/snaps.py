@@ -30,6 +30,7 @@ class Osnap(str, Enum):
     QUADRANT = "quadrant"
     NODE = "node"
     EXTENSION = "extension"
+    INSERTION = "insertion"
 
     @property
     def label(self) -> str:
@@ -38,7 +39,7 @@ class Osnap(str, Enum):
 
 DEFAULT_OSNAPS = frozenset({
     Osnap.ENDPOINT, Osnap.MIDPOINT, Osnap.CENTER, Osnap.INTERSECTION, Osnap.PERPENDICULAR,
-    Osnap.QUADRANT, Osnap.NODE, Osnap.EXTENSION,
+    Osnap.QUADRANT, Osnap.NODE, Osnap.EXTENSION, Osnap.INSERTION,
 })
 
 # lower = preferred when two snaps are about the same distance from the cursor
@@ -46,9 +47,11 @@ _PENALTY = {
     Osnap.ENDPOINT: 0.0, Osnap.INTERSECTION: 0.0, Osnap.NODE: 0.0,
     Osnap.MIDPOINT: 0.05, Osnap.CENTER: 0.1, Osnap.QUADRANT: 0.05,
     Osnap.PERPENDICULAR: 0.15, Osnap.TANGENT: 0.15, Osnap.EXTENSION: 0.3, Osnap.NEAREST: 1.0,
+    Osnap.INSERTION: 0.02,
 }
 
-TRACKABLE = {Osnap.ENDPOINT, Osnap.MIDPOINT, Osnap.CENTER, Osnap.INTERSECTION, Osnap.QUADRANT, Osnap.NODE}
+TRACKABLE = {Osnap.ENDPOINT, Osnap.MIDPOINT, Osnap.CENTER, Osnap.INTERSECTION, Osnap.QUADRANT, Osnap.NODE,
+             Osnap.INSERTION}
 
 
 @dataclass(slots=True)
@@ -147,10 +150,12 @@ class SnapEngine:
     # ------------------------------------------------------------ object snaps
     def object_snap(self, cursor: Vec, tol: float, modes: frozenset[Osnap],
                     base: Vec | None = None) -> SnapResult | None:
+        doc = self.index.doc
         ents = self.index.near(cursor, tol)
         if len(ents) > 60:
-            ents.sort(key=lambda e: e.distance_to(cursor))
+            ents.sort(key=lambda e: doc.geometry(e).distance_to(cursor))
             ents = ents[:60]
+        geos = [doc.geometry(e) for e in ents]
         cands: list[tuple[float, Vec, Osnap]] = []
 
         def add(pt: Vec, mode: Osnap, d: float | None = None) -> None:
@@ -158,27 +163,30 @@ class SnapEngine:
             if dd <= tol:
                 cands.append((dd / tol + _PENALTY[mode], pt, mode))
 
-        for e in ents:
+        for g in geos:
             if Osnap.ENDPOINT in modes:
-                for p in e.endpoints():
+                for p in g.endpoints:
                     add(p, Osnap.ENDPOINT)
             if Osnap.MIDPOINT in modes:
-                for p in e.midpoints():
+                for p in g.midpoints:
                     add(p, Osnap.MIDPOINT)
             if Osnap.QUADRANT in modes:
-                for p in e.quadrants():
+                for p in g.quadrants:
                     add(p, Osnap.QUADRANT)
             if Osnap.NODE in modes:
-                for p in e.nodes():
+                for p in g.nodes:
                     add(p, Osnap.NODE)
-            if Osnap.CENTER in modes and e.centers():
-                edge = e.distance_to(cursor)
-                for p in e.centers():
+            if Osnap.INSERTION in modes:
+                for p in g.insertions:
+                    add(p, Osnap.INSERTION)
+            prims = g.prims(snappable_only=True)
+            if Osnap.CENTER in modes and g.centers:
+                edge = min((p.distance_to(cursor) for p in prims), default=math.inf)
+                for p in g.centers:
                     if dist(p, cursor) <= tol:
                         add(p, Osnap.CENTER)
                     elif edge <= tol:            # hovering the curve shows its center
                         add(p, Osnap.CENTER, d=edge)
-            prims = e.primitives()
             if base is not None and Osnap.PERPENDICULAR in modes:
                 for prim in prims:
                     for f in perpendicular_foot(prim, base):
@@ -195,7 +203,9 @@ class SnapEngine:
                     add(prim.nearest(cursor), Osnap.NEAREST)
 
         if Osnap.INTERSECTION in modes and len(ents) > 0:
-            all_prims = [(i, p) for i, e in enumerate(ents[:30]) for p in e.primitives()]
+            all_prims = [(i, p) for i, g in enumerate(geos[:30]) for p in g.prims(snappable_only=True)
+                         if p.bbox()[0] - tol <= cursor[0] <= p.bbox()[2] + tol
+                         and p.bbox()[1] - tol <= cursor[1] <= p.bbox()[3] + tol][:400]
             for a in range(len(all_prims)):
                 ia, pa = all_prims[a]
                 for b in range(a + 1, len(all_prims)):
@@ -238,7 +248,7 @@ class SnapEngine:
                 if dist(e.p1, point) <= tol:
                     return normalize(sub(e.p1, e.p2))
             else:
-                for prim in e.primitives():
+                for prim in self.index.doc.geometry(e).prims(snappable_only=True):
                     if isinstance(prim, Seg):
                         if dist(prim.q, point) <= tol:
                             return normalize(sub(prim.q, prim.p))

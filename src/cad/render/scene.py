@@ -15,8 +15,9 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from ..core.geom2d.fill import triangulate
 from ..core.geom2d.primitives import Arc as ArcPrim
-from ..core.model import ChangeSet, Document, Entity, Point
+from ..core.model import MODEL_SPACE, ChangeSet, Document, Entity, Point
 from ..core.model.styles import (
     DEFAULT_LINEWEIGHT_MM, LW_DEFAULT, MAX_PATTERN_ELEMENTS, color_to_rgb,
 )
@@ -26,16 +27,10 @@ MAX_LINETYPES = 32
 PX_PER_MM_LINEWEIGHT = 96 / 25.4
 
 
-@dataclass(slots=True)
-class _Geom:
-    segs: np.ndarray       # (k, 4) float64
-    dist0: np.ndarray      # (k,)
+FILL_STRIDE = 6          # x y r g b a per triangle vertex
 
 
-def tessellate_entity(e: Entity, tol: float) -> _Geom | None:
-    prims = e.primitives()
-    if not prims:
-        return None
+def _prim_segments(prims, tol: float) -> tuple[np.ndarray, np.ndarray] | None:
     chunks = []
     for prim in prims:
         pts = prim.tessellate(tol) if isinstance(prim, ArcPrim) else np.array([prim.p, prim.q], dtype=np.float64)
@@ -46,13 +41,13 @@ def tessellate_entity(e: Entity, tol: float) -> _Geom | None:
     segs = np.vstack(chunks)
     lengths = np.hypot(segs[:, 2] - segs[:, 0], segs[:, 3] - segs[:, 1])
     dist0 = np.concatenate(([0.0], np.cumsum(lengths)[:-1]))
-    return _Geom(segs, dist0)
+    return segs, dist0
 
 
 def _has_curves(e: Entity | None) -> bool:
     if e is None:
         return True
-    return any(isinstance(p, ArcPrim) for p in e.primitives())
+    return e.TYPE in ("circle", "arc", "polyline", "ellipse", "spline", "insert", "dimension", "hatch")
 
 
 @dataclass(slots=True)
@@ -61,10 +56,14 @@ class StyleOptions:
     show_lineweights: bool = False
 
 
-class SceneBuilder:
-    """Caches one float32 instance block per entity; the full scene is their concatenation.
+EMPTY_SEGS = np.zeros((0, STRIDE), dtype=np.float32)
+EMPTY_TRIS = np.zeros((0, FILL_STRIDE), dtype=np.float32)
 
-    Changing one entity re-tessellates only that entity. Layer/linetype/header
+
+class SceneBuilder:
+    """Caches one float32 block of segments and one of fill triangles per entity.
+
+    Changing one entity re-tessellates only that entity. Layer/linetype/header/block
     changes, a new chord tolerance or new style options restyle everything.
     """
 
@@ -72,7 +71,7 @@ class SceneBuilder:
         self.doc = doc
         self.tol = 0.05                         # chord tolerance (mm)
         self.origin: tuple[float, float] | None = None
-        self._blocks: dict[int, np.ndarray | None] = {}
+        self._blocks: dict[int, tuple[np.ndarray | None, np.ndarray | None]] = {}
         self._opts: StyleOptions | None = None
         self.dirty = True
         self.linetype_index: dict[str, int] = {}
@@ -93,7 +92,7 @@ class SceneBuilder:
             self.linetype_table()
             self.invalidate_all()
             return
-        if cs.layers or cs.linetypes or cs.header:
+        if cs.layers or cs.linetypes or cs.header or "block" in cs.tables or "dimstyle" in cs.tables:
             self.linetype_table()
             self.invalidate_all()
             return
@@ -107,7 +106,6 @@ class SceneBuilder:
         if abs(math.log(tol / self.tol)) < 1e-9:
             return False
         self.tol = tol
-        # only curved entities depend on the tolerance
         for h in [h for h in self._blocks if _has_curves(self.doc.entities.get(h))]:
             del self._blocks[h]
         self.dirty = True
@@ -138,40 +136,66 @@ class SceneBuilder:
             i += 1
         return pats, lens, counts
 
-    def entity_style(self, e: Entity, opts: StyleOptions) -> tuple[float, float, float, float, float, float]:
-        doc = self.doc
-        r, g, b = color_to_rgb(doc.effective_color(e), opts.dark_background)
-        lw = doc.effective_lineweight(e)
+    def _style(self, color, lw: float, lt_name: str, opts: StyleOptions) -> tuple[float, ...]:
+        r, g, b = color_to_rgb(color, opts.dark_background)
         if lw == LW_DEFAULT or lw < 0:
             lw = DEFAULT_LINEWEIGHT_MM
         width = max(1.0, round(lw * PX_PER_MM_LINEWEIGHT)) if opts.show_lineweights else 1.0
-        lt = doc.effective_linetype(e)
-        lti = self.linetype_index.get(lt.name, 0)
-        return r / 255, g / 255, b / 255, width, float(lti), e.ltscale
+        lt = self.doc.linetypes.get(lt_name)
+        lti = self.linetype_index.get(lt.name, 0) if lt else 0
+        return r / 255, g / 255, b / 255, width, float(lti)
 
-    def _make_block(self, e: Entity, opts: StyleOptions) -> np.ndarray | None:
-        g = tessellate_entity(e, self.tol)
-        if g is None:
-            return None
+    def entity_style(self, e: Entity, opts: StyleOptions) -> tuple[float, ...]:
+        doc = self.doc
+        st = self._style(doc.effective_color(e), doc.effective_lineweight(e), doc.effective_linetype(e).name, opts)
+        return (*st, e.ltscale)
+
+    def _make_block(self, e: Entity, opts: StyleOptions) -> tuple[np.ndarray | None, np.ndarray | None]:
+        geo = self.doc.geometry(e)
         ox, oy = self.origin or (0.0, 0.0)
-        out = np.empty((len(g.segs), STRIDE), dtype=np.float32)
-        out[:, 0] = g.segs[:, 0] - ox
-        out[:, 1] = g.segs[:, 1] - oy
-        out[:, 2] = g.segs[:, 2] - ox
-        out[:, 3] = g.segs[:, 3] - oy
-        out[:, 4] = g.dist0
-        r, gg, b, w, lt, lts = self.entity_style(e, opts)
-        out[:, 5] = r
-        out[:, 6] = gg
-        out[:, 7] = b
-        out[:, 8] = 1.0
-        out[:, 9] = w
-        out[:, 10] = lt
-        out[:, 11] = lts
-        return out
+        base_style = self.entity_style(e, opts)
+        force_continuous = e.TYPE in ("hatch", "dimension", "leader")
+        seg_blocks, tri_blocks = [], []
+        for part in geo.parts:
+            if part.color is None:
+                r, g, b, w, lt, lts = base_style
+            else:
+                r, g, b, w, lt = self._style(part.color, part.lineweight if part.lineweight is not None else -3.0,
+                                             part.linetype or "Continuous", opts)
+                lts = e.ltscale
+            if force_continuous:
+                lt = 0.0
+            if part.prims:
+                res = _prim_segments(part.prims, self.tol)
+                if res is not None:
+                    segs, dist0 = res
+                    out = np.empty((len(segs), STRIDE), dtype=np.float32)
+                    out[:, 0] = segs[:, 0] - ox
+                    out[:, 1] = segs[:, 1] - oy
+                    out[:, 2] = segs[:, 2] - ox
+                    out[:, 3] = segs[:, 3] - oy
+                    out[:, 4] = dist0
+                    out[:, 5:9] = (r, g, b, 1.0)
+                    out[:, 9] = w
+                    out[:, 10] = lt
+                    out[:, 11] = lts
+                    seg_blocks.append(out)
+            for loops in part.fills:
+                tris = triangulate(loops)
+                if len(tris) == 0:
+                    continue
+                v = tris.reshape(-1, 2)
+                out = np.empty((len(v), FILL_STRIDE), dtype=np.float32)
+                out[:, 0] = v[:, 0] - ox
+                out[:, 1] = v[:, 1] - oy
+                out[:, 2:6] = (r, g, b, 1.0)
+                tri_blocks.append(out)
+        segs = np.concatenate(seg_blocks) if seg_blocks else None
+        tris = np.concatenate(tri_blocks) if tri_blocks else None
+        return segs, tris
 
-    def build(self, opts: StyleOptions) -> np.ndarray:
-        """Instance array of every visible entity, in draw order."""
+    def build(self, opts: StyleOptions, space: str = MODEL_SPACE) -> tuple[np.ndarray, np.ndarray]:
+        """(segments, fill triangles) of every visible entity in a space, in draw order."""
         if self._opts != opts:
             self._opts = StyleOptions(opts.dark_background, opts.show_lineweights)
             self.invalidate_all()
@@ -179,39 +203,38 @@ class SceneBuilder:
             self.origin = (0.0, 0.0)
         doc = self.doc
         visible_layers = {n for n, layer in doc.layers.items() if layer.visible}
-        blocks = []
-        points = []
+        segs, tris, points = [], [], []
         cache = self._blocks
         for h, e in doc.entities.items():
-            if e.layer not in visible_layers:
+            if e.space != space or e.layer not in visible_layers:
                 continue
             if isinstance(e, Point):
                 points.append(e.position)
                 continue
-            blk = cache.get(h, False)
-            if blk is False:
+            blk = cache.get(h)
+            if blk is None:
                 blk = self._make_block(e, opts)
                 cache[h] = blk
-            if blk is not None:
-                blocks.append(blk)
+            if blk[0] is not None:
+                segs.append(blk[0])
+            if blk[1] is not None:
+                tris.append(blk[1])
         self.points = points
         self.dirty = False
-        if not blocks:
-            return np.zeros((0, STRIDE), dtype=np.float32)
-        return np.concatenate(blocks)
+        return (np.concatenate(segs) if segs else EMPTY_SEGS, np.concatenate(tris) if tris else EMPTY_TRIS)
 
-    def build_entities(self, entities: list[Entity], opts: StyleOptions) -> np.ndarray:
-        """Instance array for temporary entities (previews) or a subset (highlight)."""
-        blocks = []
+    def build_entities(self, entities: list[Entity], opts: StyleOptions) -> tuple[np.ndarray, np.ndarray]:
+        """Arrays for temporary entities (previews) or a subset (highlight)."""
+        segs, tris = [], []
         for e in entities:
             blk = self._blocks.get(e.handle) if e.handle and self.doc.entities.get(e.handle) is e else None
             if blk is None:
                 blk = self._make_block(e, opts)
-            if blk is not None:
-                blocks.append(blk)
-        if not blocks:
-            return np.zeros((0, STRIDE), dtype=np.float32)
-        return np.concatenate(blocks)
+            if blk[0] is not None:
+                segs.append(blk[0])
+            if blk[1] is not None:
+                tris.append(blk[1])
+        return (np.concatenate(segs) if segs else EMPTY_SEGS, np.concatenate(tris) if tris else EMPTY_TRIS)
 
 
 def solid_color_instances(inst: np.ndarray, rgba: tuple[float, float, float, float],
@@ -220,6 +243,18 @@ def solid_color_instances(inst: np.ndarray, rgba: tuple[float, float, float, flo
     out[:, 5:9] = rgba
     out[:, 9] += extra_width
     return out
+
+
+def solid_color_tris(tris: np.ndarray, rgba: tuple[float, float, float, float]) -> np.ndarray:
+    out = tris.copy()
+    out[:, 2:6] = rgba
+    return out
+
+
+def rect_tris(x0: float, y0: float, x1: float, y1: float, rgba, origin=(0.0, 0.0)) -> np.ndarray:
+    ox, oy = origin
+    pts = [(x0, y0), (x1, y0), (x1, y1), (x0, y0), (x1, y1), (x0, y1)]
+    return np.array([(x - ox, y - oy, *rgba) for x, y in pts], dtype=np.float32)
 
 
 def grid_instances(rect: tuple[float, float, float, float], spacing: float, pixel: float,

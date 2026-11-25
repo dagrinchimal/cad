@@ -140,6 +140,7 @@ class CommandContext:
     view: ViewApi = field(default_factory=_NullView)
     ui: UiApi = field(default_factory=_NullUi)
     last_point: Vec | None = None
+    space: str = "*Model"
     memory: dict = field(default_factory=dict)            # per-command remembered values
     messages: list[str] = field(default_factory=list)
     on_message: Callable[[str], None] | None = None

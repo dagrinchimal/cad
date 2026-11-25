@@ -6,7 +6,8 @@ from dataclasses import dataclass, field, replace
 from typing import Callable, Iterator
 
 from ..units import UnitMode, UnitSettings
-from .entities import Entity
+from .entities import MODEL_SPACE, Entity
+from .tables import BlockDefinition, DimStyle, Group, Layout, default_dimstyle
 from .styles import BYLAYER, LW_BYLAYER, LW_DEFAULT, STANDARD_LINETYPES, ColorValue, Linetype
 
 
@@ -54,20 +55,29 @@ class Header:
     grid_spacing: float = 10.0        # mm
     snap_spacing: float = 10.0        # mm
     point_size_px: float = 5.0
+    text_height: float = 2.5          # default height for new text
+    current_dimstyle: str = "Standard"
+    hatch_pattern: str = "ANSI31"
+    hatch_scale: float = 1.0
+    hatch_angle: float = 0.0
     extra: dict = field(default_factory=dict, compare=False)
 
     def to_dict(self) -> dict:
         d = {"units": self.units.to_dict(), "ltscale": self.ltscale, "current_layer": self.current_layer,
              "current_color": self.current_color, "current_linetype": self.current_linetype,
              "current_lineweight": self.current_lineweight, "grid_spacing": self.grid_spacing,
-             "snap_spacing": self.snap_spacing, "point_size_px": self.point_size_px}
+             "snap_spacing": self.snap_spacing, "point_size_px": self.point_size_px,
+             "text_height": self.text_height, "current_dimstyle": self.current_dimstyle,
+             "hatch_pattern": self.hatch_pattern, "hatch_scale": self.hatch_scale,
+             "hatch_angle": self.hatch_angle}
         d.update(self.extra)
         return d
 
     @classmethod
     def from_dict(cls, d: dict) -> "Header":
         known = {"units", "ltscale", "current_layer", "current_color", "current_linetype",
-                 "current_lineweight", "grid_spacing", "snap_spacing", "point_size_px"}
+                 "current_lineweight", "grid_spacing", "snap_spacing", "point_size_px", "text_height",
+                 "current_dimstyle", "hatch_pattern", "hatch_scale", "hatch_angle"}
         return cls(
             units=UnitSettings.from_dict(d.get("units", {})),
             ltscale=float(d.get("ltscale", 1.0)),
@@ -78,6 +88,11 @@ class Header:
             grid_spacing=float(d.get("grid_spacing", 10.0)),
             snap_spacing=float(d.get("snap_spacing", 10.0)),
             point_size_px=float(d.get("point_size_px", 5.0)),
+            text_height=float(d.get("text_height", 2.5)),
+            current_dimstyle=str(d.get("current_dimstyle", "Standard")),
+            hatch_pattern=str(d.get("hatch_pattern", "ANSI31")),
+            hatch_scale=float(d.get("hatch_scale", 1.0)),
+            hatch_angle=float(d.get("hatch_angle", 0.0)),
             extra={k: v for k, v in d.items() if k not in known},
         )
 
@@ -92,10 +107,11 @@ class ChangeSet:
     linetypes: bool = False
     header: bool = False
     reset: bool = False      # whole document replaced
+    tables: set[str] = field(default_factory=set)    # other tables: block, dimstyle, group, layout, constraint
 
     def is_empty(self) -> bool:
         return not (self.added or self.removed or self.modified or self.layers
-                    or self.linetypes or self.header or self.reset)
+                    or self.linetypes or self.header or self.reset or self.tables)
 
     def note_entity(self, handle: int, before, after) -> None:
         if before is None and after is not None:
@@ -134,16 +150,26 @@ class Document:
         units = units or UnitSettings()
         header = Header(units=units)
         if units.mode is not UnitMode.MM:
-            header = replace(header, grid_spacing=25.4, snap_spacing=25.4 / units.denominator * 4)
+            header = replace(header, grid_spacing=25.4, snap_spacing=25.4 / units.denominator * 4,
+                             text_height=25.4 / 8)
         self.header: Header = header
         self.layers: dict[str, Layer] = {"0": Layer("0")}
         self.linetypes: dict[str, Linetype] = {lt.name: lt for lt in STANDARD_LINETYPES}
         self.entities: dict[int, Entity] = {}
+        self.blocks: dict[str, BlockDefinition] = {}
+        self.dimstyles: dict[str, DimStyle] = {"Standard": default_dimstyle(units)}
+        self.groups: dict[str, Group] = {}
+        self.layouts: dict[str, Layout] = {}
+        self.constraints: dict[int, object] = {}
         self.next_handle: int = 1
+        self.pre_commit_hooks: list = []      # fn(doc, tx) may add changes before a commit closes
+        self._geo_cache: dict[int, tuple] = {}
+        self._in_hooks = False
         self.extra: dict = {}              # unknown top-level keys from newer files
         self.manifest_extra: dict = {}     # unknown manifest keys from newer files
         self.extra_members: dict[str, bytes] = {}   # unknown files inside the .cadz zip
         self.path: str | None = None
+        self.current_space: str = MODEL_SPACE     # where new objects go (UI state, not saved)
 
         self._tx: Transaction | None = None
         self._tx_depth = 0
@@ -214,6 +240,13 @@ class Document:
 
     def commit(self) -> None:
         tx = self._require_tx()
+        if tx.changes and self.pre_commit_hooks and not self._in_hooks:
+            self._in_hooks = True
+            try:
+                for hook in list(self.pre_commit_hooks):
+                    hook(self, tx)
+            finally:
+                self._in_hooks = False
         self._tx = None
         if tx.changes:
             self._undo.append(tx)
@@ -263,7 +296,58 @@ class Document:
         elif table == "header":
             self.header = value
             self._pending.header = True
+            self._geo_cache.clear()
+        else:
+            store = self._table(table)
+            if value is None:
+                store.pop(key, None)
+            else:
+                store[key] = value
+            self._pending.tables.add(table)
+            if table in ("block", "dimstyle"):
+                self._geo_cache.clear()
+        if table == "entity":
+            self._geo_cache.pop(key, None)
         self.revision += 1
+
+    def _table(self, name: str) -> dict:
+        return {"block": self.blocks, "dimstyle": self.dimstyles, "group": self.groups,
+                "layout": self.layouts, "constraint": self.constraints}[name]
+
+    # ------------------------------------------------------------ generic tables
+    def set_item(self, table: str, key, value) -> None:
+        """Create or replace an item in blocks / dimstyles / groups / layouts / constraints."""
+        self._record(table, key, self._table(table).get(key), value)
+
+    def remove_item(self, table: str, key) -> None:
+        before = self._table(table).get(key)
+        if before is not None:
+            self._record(table, key, before, None)
+
+    def new_handle(self) -> int:
+        h = self.next_handle
+        self.next_handle += 1
+        return h
+
+    # ------------------------------------------------------------ geometry cache
+    def geometry(self, e: Entity):
+        """Drawable/snappable geometry of an entity (cached)."""
+        from ..text import engine_generation
+        from .geometry import build_geometry
+        gen = engine_generation()
+        hit = self._geo_cache.get(e.handle) if e.handle else None
+        if hit is not None and hit[0] is e and hit[1] == gen:
+            return hit[2]
+        g = build_geometry(self, e)
+        if e.handle and self.entities.get(e.handle) is e:
+            self._geo_cache[e.handle] = (e, gen, g)
+        return g
+
+    def entities_in(self, space: str = MODEL_SPACE) -> list[Entity]:
+        return [e for e in self.entities.values() if e.space == space]
+
+    def dimstyle(self, name: str) -> DimStyle:
+        return self.dimstyles.get(name) or self.dimstyles.get("Standard") or DimStyle()
 
     # ------------------------------------------------------------ undo / redo
     @property
@@ -302,7 +386,7 @@ class Document:
         self.flush()
         return tx.name
 
-    def clear_history(self) -> None:
+    def clear_history(self) -> None:  # noqa: D102
         self._undo.clear()
         self._redo.clear()
 
@@ -311,9 +395,12 @@ class Document:
         if use_current_props:
             h = self.header
             entity = entity.with_props(layer=h.current_layer, color=h.current_color,
-                                       linetype=h.current_linetype, lineweight=h.current_lineweight)
+                                       linetype=h.current_linetype, lineweight=h.current_lineweight,
+                                       space=self.current_space)
         if entity.layer not in self.layers:
             raise DocumentError(f"Layer '{entity.layer}' does not exist")
+        if entity.space != MODEL_SPACE and entity.space not in self.layouts:
+            raise DocumentError(f"Layout '{entity.space}' does not exist")
         handle = entity.handle if entity.handle and entity.handle not in self.entities else self.next_handle
         self.next_handle = max(self.next_handle, handle + 1)
         entity = entity.with_props(handle=handle)
@@ -334,6 +421,16 @@ class Document:
         if before is None:
             raise DocumentError(f"No entity with handle {handle}")
         self._record("entity", handle, before, None)
+        for g in list(self.groups.values()):
+            if handle in g.handles:
+                rest = g.handles - {handle}
+                if rest:
+                    self.set_item("group", g.name, replace(g, handles=rest))
+                else:
+                    self.remove_item("group", g.name)
+        for cid, c in list(self.constraints.items()):
+            if handle in getattr(c, "handles", ()):
+                self.remove_item("constraint", cid)
 
     def get(self, handle: int) -> Entity | None:
         return self.entities.get(handle)

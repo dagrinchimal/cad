@@ -49,6 +49,9 @@ TOGGLES = [
 class MainWindow(QMainWindow):
     def __init__(self, settings: AppSettings | None = None, doc: Document | None = None) -> None:
         super().__init__()
+        from ..core.text import set_text_engine
+        from ..render.text_qt import QtTextEngine
+        set_text_engine(QtTextEngine())
         self.settings = settings or AppSettings()
         self.dark = self.settings.dark_theme
         self.icons = IconProvider(self.dark)

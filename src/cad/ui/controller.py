@@ -14,7 +14,11 @@ from ..core.model import Document, Line, Polyline
 from ..core.snaps import TRACKABLE, Osnap, SnapEngine, SnapResult, SnapSettings
 from ..core.spatial import SpatialIndex
 from ..core.units import format_angle, format_length
-from ..render.scene import SceneBuilder, StyleOptions, grid_instances, solid_color_instances
+from ..core.model import MODEL_SPACE, Viewport
+from ..render.canvas_base import ViewportView
+from ..render.scene import (
+    SceneBuilder, StyleOptions, grid_instances, rect_tris, solid_color_instances, solid_color_tris,
+)
 from ..render.view import ViewState
 from .theme import colors
 
@@ -49,6 +53,8 @@ class CanvasController(QObject):
         self.window_start: tuple[float, float] | None = None
         self.window_dragged = False
         self.pan_last: QPointF | None = None
+        self.space = MODEL_SPACE
+        self.layout_views: dict[str, tuple[float, float, float]] = {}   # remembered view per space
         self.view_history: list[ViewState] = []
         self._last_history_push = 0.0
         self._acquire_target: tuple[Vec, Osnap] | None = None
@@ -76,6 +82,11 @@ class CanvasController(QObject):
             self.builder.detach()
         self.doc = doc
         self.index = index
+        self.space = MODEL_SPACE
+        index.space = MODEL_SPACE
+        doc.current_space = MODEL_SPACE
+        self.runner.ctx.space = MODEL_SPACE
+        self.layout_views = {}
         self.builder = SceneBuilder(doc)
         self.engine = SnapEngine(index, doc.header.units)
         doc.add_listener(self._on_doc_change)
@@ -140,25 +151,91 @@ class CanvasController(QObject):
     def rebuild_scene(self) -> None:
         b = self.builder
         if b.origin is None:
-            ext = self.index.extents()
+            ext = self.index.extents(MODEL_SPACE)
             if ext:
                 b.set_origin((round((ext[0] + ext[2]) / 2, 3), round((ext[1] + ext[3]) / 2, 3)))
             else:
                 b.set_origin((0.0, 0.0))
         data = self.canvas.data
-        data.scene = b.build(self.opts)
+        data.scene, data.scene_fill = b.build(self.opts, self.space)
         data.origin = b.origin
         data.linetypes = b.linetype_table()
         data.global_ltscale = self.doc.header.ltscale
+        if self.space != MODEL_SPACE:
+            data.model, data.model_fill = b.build(self.opts, MODEL_SPACE)
+            # model-space points aren't drawn inside viewports (overlay only knows the current space)
+            b.build(self.opts, self.space)
+            data.model_version += 1
+            self._update_layout_underlay()
+        else:
+            data.underlay_fill = data.underlay_fill[:0]
+            data.viewports = []
         data.scene_version += 1
         self.update_grid(invalidate=False)
         self.update_highlight(invalidate=False)
         self._update_preview()
         self.canvas.invalidate()
 
+    # ================================================================ layouts
+    def set_space(self, space: str) -> None:
+        if space == self.space:
+            return
+        if self.runner.is_active:
+            self.runner.cancel()
+        self.layout_views[self.space] = (self.view.cx, self.view.cy, self.view.scale)
+        self.runner.ctx.selection.clear()
+        self.space = space
+        self.index.space = space
+        self.runner.ctx.space = space
+        self.doc.current_space = space
+        self.hover = None
+        saved = self.layout_views.get(space)
+        if saved:
+            self.view.cx, self.view.cy, self.view.scale = saved
+            self.rebuild_scene()
+            self._view_changed()
+        else:
+            self.rebuild_scene()
+            self.zoom_extents(push=False)
+        self.selection_changed.emit()
+
+    def _update_layout_underlay(self) -> None:
+        data = self.canvas.data
+        lo = self.doc.layouts.get(self.space)
+        if lo is None:
+            data.underlay_fill = data.underlay_fill[:0]
+            data.viewports = []
+            return
+        import numpy as np
+        w, h = lo.size
+        sh = max(w, h) * 0.008
+        shadow = (0.0, 0.0, 0.0, 0.35)
+        o = self.builder.origin
+        data.underlay_fill = np.concatenate([
+            rect_tris(sh, -sh, w + sh, h - sh, shadow, o),
+            rect_tris(0, 0, w, h, (1.0, 1.0, 1.0, 1.0) if not self.dark else (0.97, 0.97, 0.97, 1.0), o),
+        ])
+        self._update_viewports()
+
+    def _update_viewports(self) -> None:
+        data = self.canvas.data
+        vps = []
+        if self.space != MODEL_SPACE:
+            for e in self.doc.entities.values():
+                if isinstance(e, Viewport) and e.space == self.space and self.doc.is_visible(e):
+                    x0, y0, x1, y1 = e.rect()
+                    sx0, sy0 = self.view.to_screen((x0, y1))
+                    sx1, sy1 = self.view.to_screen((x1, y0))
+                    clip = (sx0, sy0, max(1.0, sx1 - sx0), max(1.0, sy1 - sy0))
+                    vps.append(ViewportView(clip, e.view_center[0], e.view_center[1], self.view.scale * e.scale,
+                                            self.view.width, self.view.height))
+        data.viewports = vps
+
     def update_grid(self, invalidate: bool = True) -> None:
         data = self.canvas.data
-        if self.cfg.grid_on and self.builder.origin is not None:
+        if self.space != MODEL_SPACE:
+            self._update_viewports()
+        if self.cfg.grid_on and self.builder.origin is not None and self.space == MODEL_SPACE:
             data.grid = grid_instances(self.view.visible_rect(), self.doc.header.grid_spacing, self.view.pixel,
                                        self.builder.origin, self.dark)
         else:
@@ -171,15 +248,21 @@ class CanvasController(QObject):
         return self.pending_sel if isinstance(self.runner.request, GetSelection) else self.runner.ctx.selection
 
     def update_highlight(self, invalidate: bool = True) -> None:
+        import numpy as np
         sel = self.runner.ctx.selection | self.pending_sel
         ents = [self.doc.entities[h] for h in sel if h in self.doc.entities]
-        inst = self.builder.build_entities(ents, self.opts)
-        parts = [solid_color_instances(inst, self.highlight_rgba, 2.0)] if len(inst) else []
+        segs, tris = self.builder.build_entities(ents, self.opts)
+        seg_parts = [solid_color_instances(segs, self.highlight_rgba, 2.0)] if len(segs) else []
+        tri_parts = [solid_color_tris(tris, self.highlight_rgba)] if len(tris) else []
         if self.hover is not None and self.hover not in sel and self.hover in self.doc.entities:
-            hi = self.builder.build_entities([self.doc.entities[self.hover]], self.opts)
-            parts.append(solid_color_instances(hi, self.hover_rgba, 1.0))
-        import numpy as np
-        self.canvas.data.highlight = np.concatenate(parts) if parts else inst[:0]
+            hs, ht = self.builder.build_entities([self.doc.entities[self.hover]], self.opts)
+            if len(hs):
+                seg_parts.append(solid_color_instances(hs, self.hover_rgba, 1.0))
+            if len(ht):
+                tri_parts.append(solid_color_tris(ht, self.hover_rgba))
+        data = self.canvas.data
+        data.highlight = np.concatenate(seg_parts) if seg_parts else segs[:0]
+        data.highlight_fill = np.concatenate(tri_parts) if tri_parts else tris[:0]
         if invalidate:
             self.canvas.update()
 
@@ -189,23 +272,27 @@ class CanvasController(QObject):
         data = self.canvas.data
         if not isinstance(req, (GetPoint, GetDistance)) or self.cursor_screen is None or getattr(req, "mode", "") == "pan":
             data.preview = data.preview[:0]
+            data.preview_fill = data.preview_fill[:0]
             return
         pt = self.snap.point if self.snap else self.cursor_model
-        ents = self.runner.preview(pt)
-        parts = []
+        ents = [e.with_props(space=self.space) if e.space != self.space else e for e in self.runner.preview(pt)]
+        segs, fills = [], []
         if ents:
-            parts.append(self.builder.build_entities(ents, self.opts))
+            s_, f_ = self.builder.build_entities(ents, self.opts)
+            segs.append(s_)
+            fills.append(f_)
         base = req.base
         rubber = getattr(req, "rubber", "line") if isinstance(req, GetPoint) else "line"
         if base is not None and rubber == "line" and dist(base, pt) > 0:
-            inst = self.builder.build_entities([Line(p1=base, p2=pt)], self.opts)
-            parts.append(solid_color_instances(inst, (0.6, 0.65, 0.7, 0.9)))
+            s_, _ = self.builder.build_entities([Line(p1=base, p2=pt)], self.opts)
+            segs.append(solid_color_instances(s_, (0.6, 0.65, 0.7, 0.9)))
         elif base is not None and rubber == "rect":
             pl = Polyline(vertices=((base[0], base[1], 0), (pt[0], base[1], 0), (pt[0], pt[1], 0),
                                     (base[0], pt[1], 0)), closed=True)
-            inst = self.builder.build_entities([pl], self.opts)
-            parts.append(solid_color_instances(inst, (0.6, 0.65, 0.7, 0.9)))
-        data.preview = np.concatenate(parts) if parts else data.preview[:0]
+            s_, _ = self.builder.build_entities([pl], self.opts)
+            segs.append(solid_color_instances(s_, (0.6, 0.65, 0.7, 0.9)))
+        data.preview = np.concatenate(segs) if segs else data.preview[:0]
+        data.preview_fill = np.concatenate(fills) if fills else data.preview_fill[:0]
 
     # ================================================================ view API (used by commands)
     def _push_history(self, force: bool = True) -> None:
@@ -224,7 +311,12 @@ class CanvasController(QObject):
     def zoom_extents(self, push: bool = True) -> None:
         if push:
             self._push_history()
-        ext = self.index.extents()
+        ext = self.index.extents(self.space)
+        lo = self.doc.layouts.get(self.space)
+        if lo is not None:
+            w, h = lo.size
+            ext = (min(0, ext[0]) if ext else 0, min(0, ext[1]) if ext else 0,
+                   max(w, ext[2]) if ext else w, max(h, ext[3]) if ext else h)
         if ext is None:
             units = self.doc.header.units
             size = 300.0 if units.mode.value == "mm" else 12 * 25.4 * 4
@@ -572,7 +664,7 @@ class CanvasController(QObject):
             e = self.doc.entities.get(h)
             if e is None:
                 continue
-            for g in e.grip_points():
+            for g in self.doc.geometry(e).grips:
                 x, y = self.view.to_screen(g)
                 p.drawRect(QRectF(x - 3.5, y - 3.5, 7, 7))
 

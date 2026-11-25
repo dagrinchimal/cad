@@ -10,9 +10,10 @@ from typing import Callable
 
 from .. import APP_NAME, __version__
 from ..core.model import Document, Header, Layer, Linetype, entity_from_dict, entity_to_dict
+from ..core.model.tables import BlockDefinition, DimStyle, Group, Layout
 
 FORMAT_NAME = "cadz"
-FORMAT_VERSION = (1, 0, 0)
+FORMAT_VERSION = (1, 1, 0)   # 1.1: blocks, dimstyles, groups, layouts, constraints, new entity types
 KNOWN_MEMBERS = {"manifest.json", "document.json", "thumbnail.png"}
 
 
@@ -55,13 +56,21 @@ def document_to_dict(doc: Document) -> dict:
         "linetypes": [lt.to_dict() for lt in doc.linetypes.values()],
         "entities": [entity_to_dict(e) for e in doc.entities.values()],
         "next_handle": doc.next_handle,
+        "blocks": [b.to_dict() for b in doc.blocks.values()],
+        "dimstyles": [s.to_dict() for s in doc.dimstyles.values()],
+        "groups": [g.to_dict() for g in doc.groups.values()],
+        "layouts": [lo.to_dict() for lo in doc.layouts.values()],
     })
+    if doc.constraints:
+        from ..core.constraints.model import constraints_to_list
+        d["constraints"] = constraints_to_list(doc.constraints)
     return d
 
 
 def document_from_dict(data: dict) -> Document:
     doc = Document()
-    known = {"header", "layers", "linetypes", "entities", "next_handle"}
+    known = {"header", "layers", "linetypes", "entities", "next_handle", "blocks", "dimstyles", "groups",
+             "layouts", "constraints"}
     doc.extra = {k: v for k, v in data.items() if k not in known}
     doc.header = Header.from_dict(data.get("header", {}))
     layers = [Layer.from_dict(x) for x in data.get("layers", [])]
@@ -70,11 +79,28 @@ def document_from_dict(data: dict) -> Document:
     for lt in data.get("linetypes", []):
         lt_obj = Linetype.from_dict(lt)
         doc.linetypes[lt_obj.name] = lt_obj
+    for bd in data.get("blocks", []):
+        b = BlockDefinition.from_dict(bd)
+        doc.blocks[b.name] = b
+    for sd in data.get("dimstyles", []):
+        st = DimStyle.from_dict(sd)
+        doc.dimstyles[st.name] = st
+    for gd in data.get("groups", []):
+        g = Group.from_dict(gd)
+        doc.groups[g.name] = g
+    for ld in data.get("layouts", []):
+        lo = Layout.from_dict(ld)
+        doc.layouts[lo.name] = lo
+    if data.get("constraints"):
+        from ..core.constraints.model import constraints_from_list
+        doc.constraints = constraints_from_list(data["constraints"])
     doc.entities = {}
     for ed in data.get("entities", []):
         e = entity_from_dict(ed)
-        if e.layer not in doc.layers:          # repair dangling layer reference
+        if e.layer not in doc.layers:          # repair dangling references
             doc.layers[e.layer] = Layer(e.layer)
+        if e.space != "*Model" and e.space not in doc.layouts:
+            doc.layouts[e.space] = Layout(e.space, order=len(doc.layouts) + 1)
         doc.entities[e.handle] = e
     doc.next_handle = max(int(data.get("next_handle", 1)), max(doc.entities, default=0) + 1)
     if doc.header.current_layer not in doc.layers:
