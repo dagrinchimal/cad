@@ -99,15 +99,16 @@ def pattern_segments(loops: list[np.ndarray], name: str, scale: float = 1.0, ang
         # edge endpoints relative to each row computed with one linear solve per edge
         p, q = edges[:, 0:2], edges[:, 2:4]
         e = q - p
-        den = e @ n            # how edges cross rows
         for k in range(k0, k1 + 1):
             P = O + k * step * n + k * shift * u
-            with np.errstate(divide="ignore", invalid="ignore"):
-                t = ((P - p) @ n) / den
-            ok = (den != 0) & (t >= 0) & (t < 1)
+            # half-open crossing rule: robust when a row passes exactly through a corner
+            da = (p - P) @ n
+            db = (q - P) @ n
+            ok = (da > 0) != (db > 0)
             if not ok.any():
                 continue
-            hits = p[ok] + e[ok] * t[ok, None]
+            t = da[ok] / (da[ok] - db[ok])
+            hits = p[ok] + e[ok] * t[:, None]
             s = np.sort((hits - P) @ u)
             for i in range(0, len(s) - 1, 2):
                 a, b = s[i], s[i + 1]
