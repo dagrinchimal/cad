@@ -276,3 +276,117 @@ def test_hatch_select_objects_and_boundary(runner):
     typed(runner, "BO", "1,1")
     runner.submit_enter()
     assert any(p.closed for p in ents(runner, Polyline))
+
+
+# ------------------------------------------------------------- phase 3 modify commands
+def _seed(runner, *ents_):
+    doc = runner.ctx.doc
+    with doc.transaction("seed"):
+        return [doc.add(e) for e in ents_]
+
+
+def pick(runner, pt):
+    runner.submit_point(pt)
+
+
+def test_move_copy_rotate_scale_mirror(runner):
+    (a,) = _seed(runner, Line(p1=(0, 0), p2=(10, 0)))
+    runner.ctx.selection = {a.handle}
+    typed(runner, "M", "0,0", "5,5")
+    assert runner.ctx.doc.get(a.handle).p1 == pytest.approx((5, 5))
+    runner.ctx.selection = {a.handle}
+    typed(runner, "CO", "5,5", "5,15", "5,25")
+    runner.submit_enter()
+    assert len(ents(runner, Line)) == 3
+    runner.ctx.selection = {a.handle}
+    typed(runner, "RO", "5,5", "90")
+    assert runner.ctx.doc.get(a.handle).p2 == pytest.approx((5, 15))
+    runner.ctx.selection = {a.handle}
+    typed(runner, "SC", "5,5", "2")
+    assert runner.ctx.doc.get(a.handle).p2 == pytest.approx((5, 25))
+    runner.ctx.selection = {a.handle}
+    typed(runner, "MI", "0,0", "0,10", "")
+    assert len(ents(runner, Line)) == 4
+    assert ents(runner, Line)[-1].p1 == pytest.approx((-5, 5))
+    runner.ctx.selection = {a.handle}
+    typed(runner, "RO", "5,5", "R", "90", "180")
+    assert runner.ctx.doc.get(a.handle).p2 == pytest.approx((-15, 5))
+
+
+def test_offset_trim_extend_commands(runner):
+    h, v1, v2 = _seed(runner, Line(p1=(0, 0), p2=(100, 0)), Line(p1=(30, -10), p2=(30, 10)),
+                      Line(p1=(60, -10), p2=(60, 10)))
+    typed(runner, "O", "5")
+    pick(runner, (50, 0))
+    pick(runner, (50, 10))
+    runner.submit_enter()
+    assert any(x.p1 == pytest.approx((0, 5)) for x in ents(runner, Line))
+    typed(runner, "TR")
+    pick(runner, (45, 0))
+    runner.submit_enter()
+    lines = [x for x in ents(runner, Line) if x.p1[1] == 0 and x.p2[1] == 0]
+    assert sorted((x.p1[0], x.p2[0]) for x in lines) == [(0, pytest.approx(30)), (pytest.approx(60), 100)]
+    (short,) = _seed(runner, Line(p1=(0, -5), p2=(20, -5)))
+    typed(runner, "EX")
+    pick(runner, (19, -5))
+    runner.submit_enter()
+    assert runner.ctx.doc.get(short.handle).p2 == pytest.approx((30, -5))
+
+
+def test_fillet_chamfer_commands(runner):
+    a, b = _seed(runner, Line(p1=(0, 0), p2=(10, 0)), Line(p1=(12, 2), p2=(12, 10)))
+    typed(runner, "F", "R", "2")
+    pick(runner, (5, 0))
+    pick(runner, (12, 8))
+    assert len(ents(runner, Arc)) == 1
+    c, d = _seed(runner, Line(p1=(100, 0), p2=(110, 0)), Line(p1=(112, 2), p2=(112, 10)))
+    typed(runner, "CHA", "D", "1", "2")
+    pick(runner, (105, 0))
+    pick(runner, (112, 8))
+    assert len(ents(runner, Line)) == 5
+
+
+def test_arrays(runner):
+    (c,) = _seed(runner, Circle(center=(0, 0), radius=1))
+    runner.ctx.selection = {c.handle}
+    typed(runner, "ARRAYRECT", "2", "3", "10", "5")
+    assert len(ents(runner, Circle)) == 6
+    runner.ctx.selection = {c.handle}
+    typed(runner, "ARRAYPOLAR", "20,0", "8", "360", "Y")
+    assert len(ents(runner, Circle)) == 6 + 7
+
+
+def test_break_join_explode_stretch(runner):
+    (a,) = _seed(runner, Line(p1=(0, 0), p2=(10, 0)))
+    typed(runner, "BR")
+    pick(runner, (2, 0))
+    typed(runner, "4,0")
+    assert len(ents(runner, Line)) == 2
+    runner.ctx.selection = set(runner.ctx.doc.entities)
+    typed(runner, "J")
+    assert len(ents(runner, Line)) == 2        # there's a gap: nothing joined
+    l1, l2 = _seed(runner, Line(p1=(20, 0), p2=(30, 0)), Line(p1=(30, 0), p2=(30, 10)))
+    runner.ctx.selection = {l1.handle, l2.handle}
+    typed(runner, "J")
+    pl = ents(runner, Polyline)[0]
+    runner.ctx.selection = {pl.handle}
+    typed(runner, "X")
+    assert len(ents(runner, Polyline)) == 0
+    (sq,) = _seed(runner, Polyline(vertices=((100, 0, 0), (110, 0, 0), (110, 10, 0), (100, 10, 0)), closed=True))
+    runner.run("S")
+    runner.ctx.memory["last_window"] = (105, -1, 120, 20)
+    runner.submit_selection({sq.handle})
+    typed(runner, "0,0", "5,0")
+    assert abs(runner.ctx.doc.get(sq.handle).area()) == pytest.approx(150)
+
+
+def test_locked_layer_objects_are_not_edited(runner):
+    from cad.core.model import Layer
+    doc = runner.ctx.doc
+    with doc.transaction("s"):
+        doc.add_layer(Layer("Lock", locked=True))
+        a = doc.add(Line(p1=(0, 0), p2=(10, 0), layer="Lock"))
+    runner.ctx.selection = {a.handle}
+    typed(runner, "M")
+    assert not runner.is_active and "locked" in runner.ctx.messages[-1]
+    assert doc.get(a.handle).p1 == (0, 0)

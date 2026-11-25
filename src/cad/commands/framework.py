@@ -97,9 +97,11 @@ class GetAngle(Request):
 
 @dataclass(slots=True)
 class GetNumber(Request):
-    """A plain number without units (counts, scale factors)."""
+    """A plain number without units (counts, scale factors). With `base`, a picked point gives its distance."""
     integer: bool = False
     minimum: float | None = None
+    base: Vec | None = None
+    preview: PreviewFn | None = None
 
 
 @dataclass(slots=True)
@@ -118,6 +120,12 @@ class GetSelection(Request):
     use_pickfirst: bool = True
 
 
+@dataclass(slots=True)
+class GetEntity(Request):
+    """Pick one object. Answers (entity, picked point)."""
+    preview: PreviewFn | None = None
+
+
 def kw(*names: str) -> tuple[Keyword, ...]:
     return tuple(Keyword(n) for n in names)
 
@@ -125,6 +133,7 @@ def kw(*names: str) -> tuple[Keyword, ...]:
 # ------------------------------------------------------------------ context
 class ViewApi(Protocol):
     def visible_rect(self): ...
+    def pick_tolerance(self) -> float: ...
     def zoom_extents(self) -> None: ...
     def zoom_window(self, p1: Vec, p2: Vec) -> None: ...
     def zoom_previous(self) -> bool: ...
@@ -139,6 +148,9 @@ class UiApi(Protocol):
 class _NullView:
     def visible_rect(self):
         return None
+
+    def pick_tolerance(self) -> float:
+        return 0.5
 
     def zoom_extents(self) -> None: ...
     def zoom_window(self, p1: Vec, p2: Vec) -> None: ...
@@ -443,7 +455,8 @@ class CommandRunner:
     def _send(self, value: Any) -> None:
         if self._gen is None:
             return
-        if isinstance(value, tuple) and len(value) == 2 and isinstance(self.request, (GetPoint,)):
+        if isinstance(value, tuple) and len(value) == 2 and isinstance(self.request, (GetPoint,)) \
+                and not isinstance(value[0], Entity):
             self.ctx.last_point = value
         gen = self._gen
         self._step(lambda: gen.send(value))
@@ -458,6 +471,14 @@ class CommandRunner:
             if req.base is None:
                 self.ctx.echo("Type a distance")
                 return
+            self._send(dist(req.base, pt))
+        elif isinstance(req, GetEntity):
+            e = self.ctx.index.pick(pt, self.ctx.view.pick_tolerance())
+            if e is None:
+                self.ctx.echo("Nothing found there. Click right on an object.")
+                return
+            self._send((e, pt))
+        elif isinstance(req, GetNumber) and getattr(req, "base", None) is not None:
             self._send(dist(req.base, pt))
         elif isinstance(req, GetAngle):
             if req.base is None or dist(req.base, pt) <= 0:

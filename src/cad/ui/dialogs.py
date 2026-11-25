@@ -447,3 +447,28 @@ class RecoveryDialog(QDialog):
 
 
 _ = (QDoubleSpinBox, QLineEdit)
+
+
+# ====================================================================== text
+
+
+class TextDialog(QDialog):
+    """Simple multiline text editor (MTEXT, leader notes, attribute values)."""
+
+    def __init__(self, title: str, text: str = "", parent=None) -> None:
+        super().__init__(parent)
+        from PySide6.QtWidgets import QPlainTextEdit
+        self.setWindowTitle(title)
+        self.resize(520, 300)
+        self.edit = QPlainTextEdit(text)
+        self.edit.setPlaceholderText("Type your text. Press Enter for a new line; click OK when done.")
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        lay = QVBoxLayout(self)
+        lay.addWidget(self.edit)
+        lay.addWidget(bb)
+        self.edit.setFocus()
+
+    def text(self) -> str:
+        return self.edit.toPlainText()

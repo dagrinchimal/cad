@@ -265,11 +265,28 @@ class MainWindow(QMainWindow):
         self.cmdline.append(text)
 
     def _on_runner_changed(self) -> None:
+        from ..commands import GetString
+        req = self.runner.request
+        if isinstance(req, GetString) and req.multiline and req is not getattr(self, "_text_dialog_for", None):
+            self._text_dialog_for = req
+            QTimer.singleShot(0, lambda r=req: self._ask_multiline(r))
         prompt = self.runner.prompt
         self.cmdline.set_prompt(prompt if self.runner.is_active else "Command:", not self.runner.is_active)
         self.prompt_label.setText(prompt if self.runner.is_active else
                                   "Ready — type a command or pick a tool")
         self._update_undo_actions()
+
+    def _ask_multiline(self, req) -> None:
+        if self.runner.request is not req:
+            return
+        from .dialogs import TextDialog
+        dlg = TextDialog(req.prompt, req.initial, self)
+        if dlg.exec():
+            self.runner.submit_text(dlg.text())
+        else:
+            self.runner.cancel()
+        self.controller._after_input()
+        self.canvas.setFocus()
 
     def undo(self) -> None:
         if self.runner.is_active:
@@ -284,6 +301,10 @@ class MainWindow(QMainWindow):
     # ================================================================ ViewApi for commands
     def visible_rect(self):
         return self.controller.view.visible_rect()
+
+    def pick_tolerance(self) -> float:
+        from .controller import PICKBOX_PX
+        return PICKBOX_PX * self.controller.view.pixel
 
     def zoom_extents(self) -> None:
         self.controller.zoom_extents()

@@ -7,7 +7,7 @@ import time
 from PySide6.QtCore import QObject, QPoint, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPen, QPolygonF
 
-from ..commands import CommandRunner, GetDistance, GetPoint, GetSelection
+from ..commands import CommandRunner, GetAngle, GetDistance, GetEntity, GetNumber, GetPoint, GetSelection
 from ..core.geom2d import Vec
 from ..core.geom2d.vec import angle_of, dist, sub
 from ..core.model import Document, Line, Polyline
@@ -23,6 +23,15 @@ from ..render.view import ViewState
 from .theme import colors
 
 PICKBOX_PX = 5
+
+
+def wants_point(req) -> bool:
+    """Requests answered by picking a (snapped) point in the drawing."""
+    if isinstance(req, GetPoint):
+        return req.mode != "pan"
+    if isinstance(req, (GetDistance, GetAngle)):
+        return True
+    return isinstance(req, GetNumber) and req.base is not None
 ACQUIRE_MS = 450
 MAX_GRIP_ENTITIES = 300
 
@@ -270,7 +279,7 @@ class CanvasController(QObject):
         req = self.runner.request
         import numpy as np
         data = self.canvas.data
-        if not isinstance(req, (GetPoint, GetDistance)) or self.cursor_screen is None or getattr(req, "mode", "") == "pan":
+        if not (wants_point(req) or isinstance(req, GetEntity)) or self.cursor_screen is None:
             data.preview = data.preview[:0]
             data.preview_fill = data.preview_fill[:0]
             return
@@ -378,7 +387,7 @@ class CanvasController(QObject):
             return
         self.cursor_model = self.view.to_model(*self.cursor_screen)
         req = self.runner.request
-        if isinstance(req, (GetPoint, GetDistance)) and getattr(req, "mode", "point") != "pan":
+        if wants_point(req):
             self.snap = self.engine.snap(self.cursor_model, self.view.pixel, self.cfg, base=req.base,
                                          grid_spacing=self.doc.header.grid_spacing,
                                          snap_spacing=self.doc.header.snap_spacing)
@@ -475,9 +484,13 @@ class CanvasController(QObject):
         if btn != Qt.MouseButton.LeftButton:
             return
         self.cursor_screen = (pos.x(), pos.y())
-        if isinstance(req, (GetPoint, GetDistance)):
+        if wants_point(req):
             self._recompute_at_cursor()
             self.runner.submit_point(self.current_point())
+            self._after_input()
+            return
+        if isinstance(req, GetEntity):
+            self.runner.submit_point(self.view.to_model(pos.x(), pos.y()))
             self._after_input()
             return
         # selecting (idle or a command asking for objects)
@@ -585,6 +598,7 @@ class CanvasController(QObject):
         rect = (min(p1[0], p2[0]), min(p1[1], p2[1]), max(p1[0], p2[0]), max(p1[1], p2[1]))
         crossing = pos.x() < sx
         found = self.index.select_window(rect, crossing)
+        self.runner.ctx.memory["last_window"] = rect
         target = self.selection_target()
         if modifiers & Qt.KeyboardModifier.ShiftModifier:
             target.difference_update(found)
@@ -729,7 +743,7 @@ class CanvasController(QObject):
             return
         x, y = self.cursor_screen
         req = self.runner.request
-        picking_point = isinstance(req, (GetPoint, GetDistance)) and getattr(req, "mode", "point") != "pan"
+        picking_point = wants_point(req)
         p.setPen(QPen(self.fg, 1))
         p.setBrush(Qt.BrushStyle.NoBrush)
         arm = 40
