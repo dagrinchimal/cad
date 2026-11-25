@@ -814,13 +814,14 @@ class Viewport(Entity):
     """A window on a layout sheet showing model space at a scale."""
     TYPE: ClassVar[str] = "viewport"
     FIELDS: ClassVar[dict[str, str]] = {"center": "pt", "width": "float", "height": "float",
-                                        "view_center": "pt", "scale": "float", "locked": "bool"}
+                                        "view_center": "pt", "scale": "float", "locked": "bool", "fit": "bool"}
     center: Vec
     width: float
     height: float
     view_center: Vec = (0.0, 0.0)
     scale: float = 1.0                # paper mm per model mm (1:50 -> 0.02)
     locked: bool = False
+    fit: bool = False                 # "scale to fit": always shows the whole model
 
     def rect(self) -> BBox:
         return (self.center[0] - self.width / 2, self.center[1] - self.height / 2,

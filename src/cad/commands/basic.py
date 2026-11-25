@@ -157,3 +157,7 @@ _ui_command("OPTIONS", "Options", "Theme, UI size, autosave and other program se
             aliases=("OP",), group="Application", keywords=("preferences", "settings", "dark mode", "theme"))
 _ui_command("PROPERTIES", "Properties", "Show or hide the Properties panel.", aliases=("PR", "CH"),
             shortcut="Ctrl+1", group="Utilities", keywords=("inspect", "change"))
+_ui_command("PAGESETUP", "Page Setup", "Choose the paper size and orientation of the current layout.",
+            group="Layout", keywords=("paper size", "sheet size", "orientation"))
+_ui_command("DIMSTYLE", "Dimension Style", "Set dimension text size, arrow size and style, and overall scale.",
+            aliases=("D", "DDIM"), group="Annotation", keywords=("dim settings", "arrow size", "dimscale"))

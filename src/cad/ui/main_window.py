@@ -9,8 +9,8 @@ from pathlib import Path
 from PySide6.QtCore import QByteArray, QPoint, QSize, Qt, QTimer
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QDockWidget, QFileDialog, QLabel, QMainWindow, QMenu, QMessageBox, QToolButton,
-    QVBoxLayout, QWidget,
+    QApplication, QComboBox, QDockWidget, QFileDialog, QInputDialog, QLabel, QMainWindow, QMenu, QMessageBox,
+    QTabBar, QToolButton, QVBoxLayout, QWidget,
 )
 
 from .. import APP_NAME, FILE_EXTENSION
@@ -84,6 +84,16 @@ class MainWindow(QMainWindow):
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(0)
         v.addWidget(self.canvas, 1)
+        self.layout_tabs = QTabBar()
+        self.layout_tabs.setShape(QTabBar.Shape.RoundedSouth)
+        self.layout_tabs.setExpanding(False)
+        self.layout_tabs.setDrawBase(False)
+        self.layout_tabs.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.layout_tabs.setToolTip("Model: where you draw at full size.<br>Layouts: paper sheets for printing, "
+                                    "with a title block and viewports.")
+        self.layout_tabs.currentChanged.connect(self._layout_tab_changed)
+        self.layout_tabs.customContextMenuRequested.connect(self._layout_tab_menu)
+        v.addWidget(self.layout_tabs)
         v.addWidget(self.cmdline)
         self.setCentralWidget(central)
 
@@ -334,6 +344,11 @@ class MainWindow(QMainWindow):
             "OPTIONS": self.options_dialog,
             "PROPERTIES": lambda: self.props_dock.setVisible(not self.props_dock.isVisible()),
         }
+        handlers["PAGESETUP"] = self.page_setup_dialog
+        handlers["DIMSTYLE"] = self.dimstyle_dialog
+        if name.startswith("SHOWLAYOUT:"):
+            self.show_space(name.split(":", 1)[1])
+            return
         fn = handlers.get(name)
         if fn:
             fn()
@@ -562,6 +577,10 @@ class MainWindow(QMainWindow):
 
     # ================================================================ refresh
     def _on_doc_change(self, doc, cs) -> None:
+        if "layout" in cs.tables or cs.reset:
+            if self.controller.space != "*Model" and self.controller.space not in doc.layouts:
+                self.controller.set_space("*Model")
+            self._refresh_layout_tabs()
         if cs.layers or cs.header or cs.reset:
             self._refresh_layer_combo()
             self._sync_units_combo()
@@ -572,7 +591,122 @@ class MainWindow(QMainWindow):
     def _schedule_properties(self) -> None:
         self._props_timer.start()
 
+    # ================================================================ layouts
+    def _refresh_layout_tabs(self) -> None:
+        tb = self.layout_tabs
+        tb.blockSignals(True)
+        while tb.count():
+            tb.removeTab(0)
+        tb.addTab("Model")
+        tb.setTabData(0, "*Model")
+        layouts = sorted(self.doc.layouts.values(), key=lambda lo: lo.order)
+        for lo in layouts:
+            i = tb.addTab(lo.name)
+            tb.setTabData(i, lo.name)
+        if not layouts:
+            i = tb.addTab("Layout1")
+            tb.setTabData(i, "+Layout1")
+            tb.setTabToolTip(i, "Click to create a printable sheet with a title block")
+        i = tb.addTab("+")
+        tb.setTabData(i, "+")
+        tb.setTabToolTip(i, "New layout sheet")
+        cur = self.controller.space
+        for k in range(tb.count()):
+            if tb.tabData(k) == cur:
+                tb.setCurrentIndex(k)
+        tb.blockSignals(False)
+
+    def _layout_tab_changed(self, idx: int) -> None:
+        data = self.layout_tabs.tabData(idx)
+        if data is None:
+            return
+        if data.startswith("+"):
+            from ..core.layouts import create_layout
+            n = len(self.doc.layouts) + 1
+            while f"Layout{n}" in self.doc.layouts:
+                n += 1
+            name = data[1:] if len(data) > 1 else f"Layout{n}"
+            if self.runner.is_active:
+                self.runner.cancel()
+            with self.doc.transaction("New layout"):
+                create_layout(self.doc, name)
+            data = name
+        self.show_space(data)
+
+    def show_space(self, space: str) -> None:
+        if space != "*Model" and space not in self.doc.layouts:
+            space = "*Model"
+        self.controller.set_space(space)
+        self._refresh_layout_tabs()
+        self.canvas.setFocus()
+
+    def _layout_tab_menu(self, pos) -> None:
+        idx = self.layout_tabs.tabAt(pos)
+        name = self.layout_tabs.tabData(idx) if idx >= 0 else None
+        if not name or name.startswith("+") or name == "*Model":
+            return
+        m = QMenu(self)
+        m.addAction("Rename…").triggered.connect(lambda: self._rename_layout(name))
+        m.addAction("Page setup…").triggered.connect(lambda: (self.show_space(name), self.page_setup_dialog()))
+        m.addSeparator()
+        m.addAction("Delete").triggered.connect(lambda: self._delete_layout(name))
+        m.exec(self.layout_tabs.mapToGlobal(pos))
+
+    def _rename_layout(self, name: str) -> None:
+        from ..core.layouts import rename_layout
+        new, ok = QInputDialog.getText(self, "Rename layout", "New name:", text=name)
+        new = new.strip()
+        if not ok or not new or new == name:
+            return
+        if new in self.doc.layouts or new == "Model":
+            QMessageBox.warning(self, "Rename layout", "That name is already used.")
+            return
+        with self.doc.transaction("Rename layout"):
+            rename_layout(self.doc, name, new)
+        if self.controller.space == name:
+            self.controller.space = new
+            self.controller.index.space = new
+            self.doc.current_space = new
+            self.ctx.space = new
+        self.show_space(self.controller.space)
+
+    def _delete_layout(self, name: str) -> None:
+        from ..core.layouts import delete_layout
+        if QMessageBox.question(self, "Delete layout", f"Delete layout {name} and everything on it?") \
+                != QMessageBox.StandardButton.Yes:
+            return
+        if self.controller.space == name:
+            self.controller.set_space("*Model")
+        with self.doc.transaction("Delete layout"):
+            delete_layout(self.doc, name)
+        self._refresh_layout_tabs()
+
+    def page_setup_dialog(self) -> None:
+        name = self.controller.space
+        lo = self.doc.layouts.get(name)
+        if lo is None:
+            QMessageBox.information(self, "Page setup", "Switch to a layout tab to set up its paper.")
+            return
+        from .dialogs import PageSetupDialog
+        dlg = PageSetupDialog(lo, self)
+        if dlg.exec():
+            paper, portrait = dlg.result()
+            with self.doc.transaction("Page setup"):
+                self.doc.set_item("layout", name, lo.with_paper(paper, portrait))
+            self.controller.rebuild_scene()
+            self.controller.zoom_extents()
+
+    def dimstyle_dialog(self) -> None:
+        from .dialogs import DimStyleDialog
+        name = self.doc.header.current_dimstyle
+        st = self.doc.dimstyle(name)
+        dlg = DimStyleDialog(st, self.doc.header.units, self)
+        if dlg.exec():
+            with self.doc.transaction("Dimension style"):
+                self.doc.set_item("dimstyle", st.name, dlg.result())
+
     def _refresh_all(self) -> None:
+        self._refresh_layout_tabs()
         self._refresh_layer_combo()
         self._sync_units_combo()
         self._update_title()

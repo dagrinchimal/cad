@@ -227,3 +227,30 @@ def test_delete_cascades_to_groups():
     doc.undo()
     doc.undo()
     assert doc.groups["G"].handles == {a.handle, b.handle}
+
+
+def test_create_layout_with_title_block_and_viewport():
+    from cad.core.layouts import create_layout, delete_layout, rename_layout, resolve_viewport
+    doc = Document()
+    with doc.transaction("l"):
+        doc.add(Line(p1=(0, 0), p2=(1000, 500)))
+        create_layout(doc, "Layout1")
+    assert "Layout1" in doc.layouts and doc.layouts["Layout1"].size == (420, 297)
+    space = [e for e in doc.entities.values() if e.space == "Layout1"]
+    assert {e.TYPE for e in space} == {"insert", "viewport"}
+    tb = next(e for e in space if e.TYPE == "insert")
+    texts = [r.text for p in doc.geometry(tb).parts for r in p.texts]
+    assert "Untitled" in texts and "1 of 1" in texts
+    vp = next(e for e in space if e.TYPE == "viewport")
+    center, scale = resolve_viewport(doc, vp, (0, 0, 1000, 500))
+    assert center == (500, 250) and scale * 1000 <= vp.width
+    with doc.transaction("r"):
+        rename_layout(doc, "Layout1", "Sheet A")
+    assert all(e.space != "Layout1" for e in doc.entities.values())
+    with doc.transaction("d"):
+        delete_layout(doc, "Sheet A")
+    assert not doc.layouts and len(doc) == 1
+    arch = Document(units=UnitSettings(mode=UnitMode.ARCHITECTURAL))
+    with arch.transaction("l"):
+        lo = create_layout(arch, "L")
+    assert lo.paper.startswith("Tabloid")

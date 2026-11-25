@@ -330,3 +330,66 @@ def ungroup_cmd(ctx: CommandContext):
 
 
 _ = (Seg, Affine2, Keyword, Polyline, replace, angle_of)
+
+
+# ------------------------------------------------------------------ layouts
+@command("MVIEW", label="Viewport", aliases=("MV",), group="Layout",
+         description="On a layout sheet, draw a window that shows the model at a scale.",
+         keywords=("viewport", "sheet window", "paper space view"))
+def mview_cmd(ctx: CommandContext):
+    from ..core.layouts import VIEWPORT_LAYER, ensure_layer
+    from ..core.model import MODEL_SPACE, Viewport
+    if ctx.space == MODEL_SPACE:
+        ctx.echo("Viewports go on layout sheets. Switch to a layout tab first.")
+        return
+    a = yield GetPoint("Specify corner of viewport", rubber=None)
+    b = yield GetPoint("Specify opposite corner", base=a, rubber="rect")
+    w, h = abs(b[0] - a[0]), abs(b[1] - a[1])
+    if w <= 0 or h <= 0:
+        return
+    ensure_layer(ctx.doc, VIEWPORT_LAYER, color=8, plot=False)
+    ctx.doc.add(Viewport(center=((a[0] + b[0]) / 2, (a[1] + b[1]) / 2), width=w, height=h, fit=True,
+                         layer=VIEWPORT_LAYER, space=ctx.space))
+    ctx.echo("Viewport created (scale to fit). Pick a scale for it in the Properties panel.")
+
+
+@command("LAYOUT", label="Layout", aliases=("LO",), group="Layout",
+         description="Create, rename or delete layout sheets (paper space).",
+         keywords=("sheet", "paper space", "new sheet"))
+def layout_cmd(ctx: CommandContext):
+    from ..core.layouts import create_layout, delete_layout, rename_layout
+    doc = ctx.doc
+    r = yield GetPoint("Layout option", keywords=kw("New", "Rename", "Delete"), default="New", default_text="New",
+                       rubber=None)
+    if r == "New":
+        n = len(doc.layouts) + 1
+        while f"Layout{n}" in doc.layouts:
+            n += 1
+        name = (yield GetString("Enter new layout name", default=f"Layout{n}", default_text=f"Layout{n}")).strip()
+        if not name or name in doc.layouts or name == "Model":
+            ctx.echo("That layout name is taken or empty.")
+            return
+        create_layout(doc, name)
+        ctx.ui.run_ui_action(f"SHOWLAYOUT:{name}")
+    elif r == "Rename":
+        old = (yield GetString("Enter layout to rename", default=ctx.space if ctx.space in doc.layouts else "",
+                               default_text=ctx.space if ctx.space in doc.layouts else "")).strip()
+        if old not in doc.layouts:
+            ctx.echo(f"There's no layout named {old}.")
+            return
+        new = (yield GetString("Enter new layout name")).strip()
+        if not new or new in doc.layouts or new == "Model":
+            ctx.echo("That layout name is taken or empty.")
+            return
+        rename_layout(doc, old, new)
+        if ctx.space == old:
+            ctx.ui.run_ui_action(f"SHOWLAYOUT:{new}")
+    elif r == "Delete":
+        name = (yield GetString("Enter layout to delete", default=ctx.space if ctx.space in doc.layouts else "",
+                                default_text=ctx.space if ctx.space in doc.layouts else "")).strip()
+        if name not in doc.layouts:
+            ctx.echo(f"There's no layout named {name}.")
+            return
+        if ctx.space == name:
+            ctx.ui.run_ui_action("SHOWLAYOUT:*Model")
+        delete_layout(doc, name)

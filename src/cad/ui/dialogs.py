@@ -472,3 +472,79 @@ class TextDialog(QDialog):
 
     def text(self) -> str:
         return self.edit.toPlainText()
+
+
+# ====================================================================== page setup / dim style
+
+
+class PageSetupDialog(QDialog):
+    def __init__(self, layout, parent=None) -> None:
+        super().__init__(parent)
+        from ..core.model import PAPER_SIZES
+        self.setWindowTitle(f"Page Setup — {layout.name}")
+        self.paper = QComboBox()
+        for name, (w, h) in PAPER_SIZES.items():
+            self.paper.addItem(f"{name}   ({w:g} x {h:g} mm)", name)
+        self.paper.setCurrentIndex(max(0, self.paper.findData(layout.paper)))
+        self.portrait = QCheckBox("Portrait (tall)")
+        self.portrait.setChecked(layout.portrait)
+        f = QFormLayout()
+        f.addRow("Paper size", self.paper)
+        f.addRow("", self.portrait)
+        note = QLabel("The title block keeps its size. Delete it and create a new layout for a matching one.")
+        note.setWordWrap(True)
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        lay = QVBoxLayout(self)
+        lay.addLayout(f)
+        lay.addWidget(note)
+        lay.addWidget(bb)
+
+    def result(self) -> tuple[str, bool]:
+        return self.paper.currentData(), self.portrait.isChecked()
+
+
+class DimStyleDialog(QDialog):
+    def __init__(self, style, units, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(f"Dimension Style — {style.name}")
+        self.style_ = style
+        self.fields = {}
+        f = QFormLayout()
+        for attr, label in (("text_height", "Text height"), ("arrow_size", "Arrow size"),
+                            ("ext_offset", "Gap from object"), ("ext_extension", "Extension past dimension line"),
+                            ("text_gap", "Gap around text"), ("center_mark", "Center mark size")):
+            w = LengthEdit(units, positive=attr != "center_mark")
+            w.set_value(getattr(style, attr))
+            self.fields[attr] = w
+            f.addRow(label, w)
+        self.arrow = QComboBox()
+        for key, label in (("closed", "Closed filled arrow"), ("open", "Open arrow"), ("tick", "Architectural tick"),
+                           ("dot", "Dot")):
+            self.arrow.addItem(label, key)
+        self.arrow.setCurrentIndex(max(0, self.arrow.findData(style.arrow)))
+        f.addRow("Arrowheads", self.arrow)
+        self.scale = QDoubleSpinBox()
+        self.scale.setRange(0.0001, 100000)
+        self.scale.setDecimals(4)
+        self.scale.setValue(style.scale)
+        self.scale.setToolTip("Multiplies all sizes above. For a 1:50 drawing printed from model space, use 50.")
+        f.addRow("Overall scale", self.scale)
+        self.places = QSpinBox()
+        self.places.setRange(-1, 8)
+        self.places.setSpecialValueText("Use drawing units")
+        self.places.setValue(style.decimal_places)
+        f.addRow("Decimal places", self.places)
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        lay = QVBoxLayout(self)
+        lay.addLayout(f)
+        lay.addWidget(bb)
+
+    def result(self):
+        from dataclasses import replace as _r
+        vals = {k: (w._value if w._value is not None else getattr(self.style_, k)) for k, w in self.fields.items()}
+        return _r(self.style_, arrow=self.arrow.currentData(), scale=self.scale.value(),
+                  decimal_places=self.places.value(), **vals)

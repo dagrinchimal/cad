@@ -146,6 +146,11 @@ class CanvasController(QObject):
             self.marker = QColor(220, 110, 0)
             self.track = QColor(20, 150, 40)
 
+    def space_opts(self) -> StyleOptions:
+        """Layout sheets are white paper: color 7 prints black there, whatever the theme."""
+        return StyleOptions(dark_background=self.dark and self.space == MODEL_SPACE,
+                            show_lineweights=self.opts.show_lineweights)
+
     def set_theme(self, dark: bool) -> None:
         self.dark = dark
         self.opts = StyleOptions(dark_background=dark, show_lineweights=self.opts.show_lineweights)
@@ -166,6 +171,7 @@ class CanvasController(QObject):
             else:
                 b.set_origin((0.0, 0.0))
         data = self.canvas.data
+        self.opts = self.space_opts()
         data.scene, data.scene_fill = b.build(self.opts, self.space)
         data.origin = b.origin
         data.linetypes = b.linetype_table()
@@ -230,14 +236,16 @@ class CanvasController(QObject):
         data = self.canvas.data
         vps = []
         if self.space != MODEL_SPACE:
+            from ..core.layouts import resolve_viewport
+            model_box = self.index.extents(MODEL_SPACE)
             for e in self.doc.entities.values():
                 if isinstance(e, Viewport) and e.space == self.space and self.doc.is_visible(e):
                     x0, y0, x1, y1 = e.rect()
                     sx0, sy0 = self.view.to_screen((x0, y1))
                     sx1, sy1 = self.view.to_screen((x1, y0))
                     clip = (sx0, sy0, max(1.0, sx1 - sx0), max(1.0, sy1 - sy0))
-                    vps.append(ViewportView(clip, e.view_center[0], e.view_center[1], self.view.scale * e.scale,
-                                            self.view.width, self.view.height))
+                    (vcx, vcy), vs = resolve_viewport(self.doc, e, model_box)
+                    vps.append(ViewportView(clip, vcx, vcy, self.view.scale * vs, self.view.width, self.view.height))
         data.viewports = vps
 
     def update_grid(self, invalidate: bool = True) -> None:
