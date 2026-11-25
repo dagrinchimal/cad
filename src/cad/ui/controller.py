@@ -501,10 +501,11 @@ class CanvasController(QObject):
         hit = self.index.pick(self.cursor_model, PICKBOX_PX * self.view.pixel)
         if hit is not None:
             target = self.selection_target()
+            members = self.with_groups({hit.handle})
             if ev.modifiers() & Qt.KeyboardModifier.ShiftModifier:
-                target.discard(hit.handle)
+                target.difference_update(members)
             else:
-                target.add(hit.handle)
+                target.update(members)
             self._selection_updated()
             return
         self.window_start = (pos.x(), pos.y())
@@ -573,6 +574,14 @@ class CanvasController(QObject):
             self.runner.submit_text("")
         self._after_input()
 
+    def with_groups(self, handles: set[int]) -> set[int]:
+        """Clicking one member of a group selects the whole group (AutoCAD PICKSTYLE 1)."""
+        out = set(handles)
+        for g in self.doc.groups.values():
+            if g.handles & handles:
+                out |= {h for h in g.handles if h in self.doc.entities and self.doc.entities[h].space == self.space}
+        return out
+
     def select_all(self) -> None:
         target = self.selection_target()
         target.update(h for h, e in self.doc.entities.items() if self.doc.is_visible(e))
@@ -600,6 +609,7 @@ class CanvasController(QObject):
         found = self.index.select_window(rect, crossing)
         self.runner.ctx.memory["last_window"] = rect
         target = self.selection_target()
+        found = self.with_groups(set(found))
         if modifiers & Qt.KeyboardModifier.ShiftModifier:
             target.difference_update(found)
         else:

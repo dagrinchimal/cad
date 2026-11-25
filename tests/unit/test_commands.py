@@ -390,3 +390,71 @@ def test_locked_layer_objects_are_not_edited(runner):
     typed(runner, "M")
     assert not runner.is_active and "locked" in runner.ctx.messages[-1]
     assert doc.get(a.handle).p1 == (0, 0)
+
+
+# ------------------------------------------------------------- dimensions, blocks, groups
+def test_dimension_commands(runner):
+    from cad.core.model import Dimension, Leader
+    (ln, c, l2) = _seed(runner, Line(p1=(0, 0), p2=(30, 40)), Circle(center=(100, 0), radius=10),
+                        Line(p1=(0, 0), p2=(0, 50)))
+    typed(runner, "DAN")
+    pick(runner, (15, 20))
+    pick(runner, (0, 25))
+    typed(runner, "5,15")
+    typed(runner, "DLI", "0,0", "30,40", "15,60")
+    typed(runner, "DLI", "0,0", "30,40", "50,20")
+    typed(runner, "DAL", "0,0", "30,40", "0,10")
+    typed(runner, "DLI")
+    runner.submit_enter()
+    pick(runner, (15, 20))
+    typed(runner, "15,70")
+    typed(runner, "DRA")
+    pick(runner, (110, 0))
+    typed(runner, "130,10")
+    typed(runner, "DDI")
+    pick(runner, (100, 10))
+    typed(runner, "120,30")
+    typed(runner, "DOR", "30,40", "30,60")
+    typed(runner, "LE", "0,0", "20,20")
+    runner.submit_enter()
+    runner.submit_text("Check this")
+    ds = ents(runner, Dimension)
+    ang = ds.pop(0)
+    assert math.degrees(ang.measurement()) == pytest.approx(90 - math.degrees(math.atan2(40, 30)))
+    vals = [round(d.measurement(), 6) for d in ds]
+    assert vals[:3] == [30, 40, 50]
+    assert ds[1].angle == pytest.approx(math.pi / 2)
+    assert vals[3] == 30                      # picked the line: its endpoints
+    assert vals[4] == 10 and vals[5] == 20    # radius and diameter
+    assert ds[6].axis == "x" and ds[6].measurement() == pytest.approx(30)
+    assert ents(runner, Leader)[0].text == "Check this"
+
+
+def test_block_insert_attributes_and_explode(runner):
+    from cad.core.model import AttributeDefinition, BlockReference
+    a, b = _seed(runner, Line(p1=(0, 0), p2=(10, 0)), Circle(center=(5, 5), radius=2))
+    typed(runner, "ATT", "NUM", "Door number?", "D1", "0,-5", "2")
+    att = ents(runner, AttributeDefinition)[0]
+    runner.ctx.selection = {a.handle, b.handle, att.handle}
+    typed(runner, "B", "Door", "0,0", "")              # Enter = Convert
+    assert "Door" in runner.ctx.doc.blocks
+    assert len(ents(runner, BlockReference)) == 1 and len(ents(runner, Line)) == 0
+    typed(runner, "I", "door", "S", "2", "100,100", "D42")
+    ref = ents(runner, BlockReference)[-1]
+    assert ref.sx == 2 and ref.attrib("NUM") == "D42"
+    g = runner.ctx.doc.geometry(ref)
+    assert any(r.text == "D42" for p in g.parts for r in p.texts)
+    runner.ctx.selection = {ref.handle}
+    typed(runner, "X")
+    assert any(e.TYPE == "text" and e.text == "D42" for e in runner.ctx.doc.entities.values())
+    assert any(isinstance(e, Line) and e.p2 == pytest.approx((120, 100)) for e in runner.ctx.doc.entities.values())
+
+
+def test_groups(runner):
+    a, b = _seed(runner, Line(p1=(0, 0), p2=(10, 0)), Line(p1=(0, 5), p2=(10, 5)))
+    runner.ctx.selection = {a.handle, b.handle}
+    typed(runner, "G", "")
+    assert runner.ctx.doc.groups["Group1"].handles == {a.handle, b.handle}
+    runner.ctx.selection = {a.handle}
+    typed(runner, "UNGROUP")
+    assert not runner.ctx.doc.groups
