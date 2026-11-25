@@ -12,7 +12,13 @@ src/cad/
     model/     entities.py, document.py (tables + transactions), styles.py
     spatial.py R-tree index: pick, window/crossing selection, snap candidates
     snaps.py   object snaps, grid, ortho, polar tracking, object snap tracking
-  commands/    framework.py (requests, registry, runner, coordinate input), draw.py, basic.py
+    model/geometry.py   entity -> drawable/snappable Geometry (parts, fills, text runs, snap points)
+    model/dimensions.py dimension & leader geometry;  model/hatch_patterns.py
+    edit.py    trim, extend, offset, fillet, chamfer, join, explode (Curve parameterization)
+    layouts.py layouts, title blocks, viewports
+    constraints/  model (refs, expressions), solver (LM + DOF), manager (re-solve on commit)
+    text.py    text layout interface (Qt engine registered by the UI)
+  commands/    framework.py, draw.py, draw2.py, modify.py, annotate.py, constraints.py, basic.py
   io/native.py .cadz save/load
   render/      view.py, scene.py (entities → GPU instance arrays), canvas_gl.py, canvas_painter.py
   ui/          main_window.py, controller.py (mouse/keys/snaps/overlay), ribbon, command line, dialogs
@@ -52,6 +58,16 @@ def ring_cmd(ctx):
 - `preview` returns temporary entities drawn under the cursor.
 - The ribbon, command-line search, tooltips and (Phase 5) F1 help all read the registry entry.
 - Test it without any UI: see `tests/unit/test_commands.py`.
+
+**Geometry service.** Never read an entity's shape directly for drawing or snapping: call
+`doc.geometry(e)`. It returns parts (line primitives, filled areas, text runs) with snap points, and
+handles composite types (blocks with ByBlock/layer-0 styles, dimensions, hatches, text). It is cached
+per entity and invalidated automatically. To add an entity type: a frozen dataclass in
+`model/entities.py` with `FIELDS`, `transformed()`, and (if composite) a builder in `model/geometry.py`.
+
+**Constraints.** `ConstraintManager` registers a pre-commit hook on the document. When a transaction
+touches constrained geometry, the connected group is re-solved and the corrections are recorded in the
+same undo step. A conflict rolls the whole edit back.
 
 **Rendering.** `SceneBuilder` caches one float32 block per entity (segments + color + width +
 linetype). Pan and zoom only change shader uniforms. Curves are re-tessellated when the zoom

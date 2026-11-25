@@ -63,6 +63,7 @@ def dim_text(doc, e: Dimension, style: DimStyle, value: float, prefix: str = "")
 def _add_text(g: Geometry, part: Part, run: TextRun) -> None:
     tp, box = text_part(run)
     part.fills.extend(tp.fills)
+    part.triangles.extend(tp.triangles)
     part.texts.extend(tp.texts)
     g.pick_areas.append([box])
 

@@ -83,14 +83,27 @@ class Ribbon(QWidget):
         lay.addWidget(self.stack)
 
     def _make_panel(self, groups: list[Group]) -> QWidget:
+        from PySide6.QtWidgets import QFrame, QScrollArea, QSizePolicy
         panel = QWidget()
         row = QHBoxLayout(panel)
         row.setContentsMargins(6, 2, 6, 2)
         row.setSpacing(0)
         for g in groups:
-            row.addWidget(self._make_group(g))
+            w = self._make_group(g)
+            w.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
+            row.addWidget(w)
         row.addStretch(1)
-        return panel
+        # never squeeze (and cut off) button labels: scroll sideways on narrow windows instead
+        scroll = QScrollArea()
+        scroll.setWidget(panel)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea, QScrollArea > QWidget > QWidget { background: transparent; }")
+        panel.setMinimumWidth(panel.sizeHint().width())
+        scroll.setFixedHeight(panel.sizeHint().height() + 14)
+        return scroll
 
     def _make_group(self, g: Group) -> QWidget:
         box = QWidget(objectName="RibbonGroup")
@@ -147,6 +160,7 @@ class Ribbon(QWidget):
         else:
             btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
             btn.setIconSize(QSize(18, 18))
+            btn.setMinimumWidth(btn.fontMetrics().horizontalAdvance(label) + 18 + 22)
         btn.setToolTip(tooltip_html(self.registry, t.command, label))
         btn.setProperty("help_id", c.help_id if c else "")
         if t.checkable_key:

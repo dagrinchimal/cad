@@ -73,6 +73,7 @@ class MainWindow(QMainWindow):
         self.controller.selection_changed.connect(self._schedule_properties)
         self.controller.context_menu_requested.connect(self._context_menu)
         self.controller.forward_text.connect(self._forward_text)
+        self.controller.edit_requested.connect(self.edit_object)
 
         # command line
         self.cmdline = CommandLine(REGISTRY)
@@ -173,6 +174,7 @@ class MainWindow(QMainWindow):
         a.triggered.connect(self.close)
         app_menu.aboutToShow.connect(self._fill_recent)
 
+        S = lambda name, label=None, then=None, icon=None: Tool(name, label, icon, then=then, large=False)  # noqa: E731
         home = [
             Group("Draw", [
                 Tool("LINE"), Tool("PLINE"),
@@ -181,12 +183,40 @@ class MainWindow(QMainWindow):
                                          Tool("CIRCLE", "3-Point", "circle_3p", then="3P")]),
                 Tool("ARC", variants=[Tool("ARC", "3-Point", "arc"),
                                       Tool("ARC", "Center, Start, End", "arc_center", then="C")]),
-                Tool("POINT", large=False),
+                S("RECTANG"), S("POLYGON"), S("ELLIPSE"), S("SPLINE"), S("POINT"), S("BOUNDARY"),
+                Tool("HATCH"),
             ]),
-            Group("Modify", [Tool("ERASE"), Tool("UNDO", large=False), Tool("REDO", large=False)]),
+            Group("Modify", [
+                S("MOVE"), S("COPY"), S("STRETCH"), S("ROTATE"), S("MIRROR"), S("SCALE"),
+                S("TRIM"), S("EXTEND"), S("OFFSET"), S("FILLET"), S("CHAMFER"), S("JOIN"),
+                S("ARRAYRECT", "Array"), S("ARRAYPOLAR", "Polar Array"), S("BREAK"),
+                S("EXPLODE"), S("ERASE"), S("UNDO"),
+            ]),
             Group("Layers", ["layer_combo", Tool("LAYER", label="Layer\nProperties")]),
-            Group("Utilities", [Tool("DIST", label="Measure", large=False), Tool("ID", label="Locate Point", large=False),
-                                Tool("UNITS"), Tool("DSETTINGS", label="Drafting\nSettings")]),
+            Group("Block", [Tool("INSERT", label="Insert"), S("BLOCK", "Create"), S("ATTDEF", "Attribute"),
+                            S("GROUP"), S("UNGROUP")]),
+            Group("Utilities", [S("DIST", "Measure"), S("ID", "Locate Point"), S("UNITS"),
+                                S("DSETTINGS", "Drafting Settings")]),
+        ]
+        annotate = [
+            Group("Text", [Tool("MTEXT", label="Multiline\nText"), Tool("TEXT", label="Single\nLine")]),
+            Group("Dimensions", [Tool("DIMLINEAR", label="Linear"), S("DIMALIGNED", "Aligned"),
+                                 S("DIMANGULAR", "Angular"), S("DIMRADIUS", "Radius"), S("DIMDIAMETER", "Diameter"),
+                                 S("DIMORDINATE", "Ordinate"), S("DIMSTYLE", "Dim Style")]),
+            Group("Leaders", [Tool("LEADER")]),
+        ]
+        parametric = [
+            Group("Geometric", [S("GCCOINCIDENT"), S("GCCOLLINEAR"), S("GCCONCENTRIC"), S("GCFIX"),
+                                S("GCPARALLEL"), S("GCPERPENDICULAR"), S("GCHORIZONTAL"), S("GCVERTICAL"),
+                                S("GCTANGENT"), S("GCSYMMETRIC"), S("GCEQUAL")]),
+            Group("Dimensional", [Tool("DCLINEAR", label="Linear"), S("DCALIGNED", "Aligned"),
+                                  S("DCANGULAR", "Angular"), S("DCRADIUS", "Radius"), S("DCDIAMETER", "Diameter")]),
+            Group("Manage", [Tool("PARAMETERS"), S("DELCONSTRAINT", "Delete"), S("CONSTRAINTBAR", "Show/Hide"),
+                             S("CONSTRAINTSTATUS", "Status")]),
+        ]
+        layout_tab = [
+            Group("Layout", [Tool("LAYOUT", label="New\nLayout", then="N"), Tool("MVIEW", label="Viewport"),
+                             Tool("PAGESETUP", label="Page\nSetup")]),
         ]
         view = [
             Group("Navigate", [Tool("ZOOMEXTENTS", label="Zoom\nExtents", icon="zoomextents"),
@@ -209,7 +239,9 @@ class MainWindow(QMainWindow):
             lay.addWidget(QLabel("Current layer"))
             lay.addWidget(self.layer_combo)
             return w
-        self.ribbon = Ribbon(REGISTRY, self.icons, [("Home", home), ("View", view)], app_menu,
+        self.ribbon = Ribbon(REGISTRY, self.icons, [("Home", home), ("Annotate", annotate),
+                                                    ("Parametric", parametric), ("Layout", layout_tab),
+                                                    ("View", view)], app_menu,
                              special={"layer_combo": layer_widget})
         self.ribbon.tool_triggered.connect(self._ribbon_tool)
         self.setMenuWidget(self.ribbon)
@@ -704,6 +736,49 @@ class MainWindow(QMainWindow):
             self.controller.rebuild_scene()
             self.controller.zoom_extents()
 
+    def edit_object(self, e) -> None:
+        """Double-click: edit text, notes, attribute values or dimension text in place."""
+        from dataclasses import replace as _r
+
+        from ..core.model import BlockReference, Dimension, Leader, MText, Text
+        from .dialogs import AttributesDialog, TextDialog
+        if self.doc.is_locked(e):
+            self.cmdline.append("That object is on a locked layer.")
+            return
+        new = None
+        if isinstance(e, (Text, MText, Leader)):
+            dlg = TextDialog("Edit text", e.text, self)
+            if dlg.exec():
+                t = dlg.text()
+                new = _r(e, text=t.replace("\n", " ") if isinstance(e, Text) else t.rstrip("\n"))
+        elif isinstance(e, Dimension):
+            t, ok = QInputDialog.getText(self, "Dimension text",
+                                         "Text (empty = measured value, <> = the measured value inside your text):",
+                                         text=e.text)
+            if ok:
+                new = _r(e, text=t)
+        elif isinstance(e, BlockReference):
+            bdef = self.doc.blocks.get(e.name)
+            ads = bdef.attdefs() if bdef else []
+            if not ads:
+                self.ctx.selection = {e.handle}
+                self.controller._selection_updated()
+                self.props_dock.show()
+                return
+            dlg = AttributesDialog([(a.tag, a.prompt or a.tag, e.attrib(a.tag, a.default)) for a in ads], self)
+            if dlg.exec():
+                new = e
+                for tag, val in dlg.values().items():
+                    new = new.with_attrib(tag, val)
+        else:
+            self.ctx.selection = {e.handle}
+            self.controller._selection_updated()
+            self.props_dock.show()
+            return
+        if new is not None and new != e:
+            with self.doc.transaction("Edit"):
+                self.doc.replace(new)
+
     def parameters_dialog(self) -> None:
         from .dialogs import ParametersDialog
         ParametersDialog(self.doc, self).exec()
@@ -804,6 +879,15 @@ class MainWindow(QMainWindow):
         elif self.ctx.selection:
             n = len(self.ctx.selection)
             m.addAction(self.icons.icon("erase"), f"Erase {n} object(s)").triggered.connect(lambda: self.run_command("ERASE"))
+            for name in ("MOVE", "COPY", "ROTATE", "SCALE", "MIRROR"):
+                c = REGISTRY.get(name)
+                m.addAction(self.icons.icon(c.icon), c.label).triggered.connect(lambda _=False, n_=name: self.run_command(n_))
+            from ..core.model import BlockReference, Dimension, Hatch, Polyline
+            sel = [self.doc.entities[h] for h in self.ctx.selection if h in self.doc.entities]
+            if any(isinstance(e, (Polyline, BlockReference, Dimension, Hatch)) for e in sel):
+                m.addAction(self.icons.icon("explode"), "Explode").triggered.connect(lambda: self.run_command("EXPLODE"))
+            if len(sel) >= 2:
+                m.addAction(self.icons.icon("group"), "Group").triggered.connect(lambda: self.run_command("GROUP"))
             m.addAction(self.icons.icon("properties"), "Properties").triggered.connect(lambda: self.props_dock.show())
             m.addSeparator()
             m.addAction("Deselect all").triggered.connect(self.controller.clear_selection)

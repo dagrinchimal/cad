@@ -33,6 +33,8 @@ def demo_drawing(win) -> None:
         for p in parts[1:]:
             if p == "":
                 r.submit_enter()
+            elif isinstance(p, tuple):
+                r.submit_point(p)
             else:
                 r.submit_text(p)
         if r.is_active:
@@ -57,6 +59,24 @@ def demo_drawing(win) -> None:
     cmd("LINE", "-1',8'", "25',8'", "")
     layer("0")
     cmd("POINT", "20',4'", "")
+    # phase 3: hatch the left room, dimension it, label it
+    with doc.transaction("Demo layers 2"):
+        doc.add_layer(Layer("Hatch", color=8))
+        doc.add_layer(Layer("Dims", color=2))
+        doc.add_layer(Layer("Text", color=7))
+    layer("Hatch")
+    cmd("HATCH", "P", "ANSI31", "SC", "24", (2 * 304.8, 2 * 304.8), "")
+    layer("Dims")
+    from dataclasses import replace as _r
+    with doc.transaction("Dim scale"):
+        doc.set_item("dimstyle", "Standard", _r(doc.dimstyle("Standard"), scale=24.0))
+    cmd("DLI", "0,0", "24',0", "12',-2'")
+    cmd("DLI", "24',0", "24',16'", "26',8'")
+    cmd("DRA", (18 * 304.8, 13.75 * 304.8), "21',15'")
+    layer("Text")
+    cmd("TEXT", "J", "MC", "6',13'", "9\"", "0", "LIVING ROOM", "")
+    cmd("TEXT", "J", "MC", "18',6'", "9\"", "0", "KITCHEN", "")
+    layer("0")
 
 
 def run_smoke_test(app: QApplication, win, report: str | None = None) -> int:

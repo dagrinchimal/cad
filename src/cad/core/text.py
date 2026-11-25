@@ -45,6 +45,7 @@ class TextLayout:
     loops: list[np.ndarray]          # outline loops in drawing coordinates (fill even-odd)
     box: list[Vec]                   # 4 corners of the text box in drawing coordinates
     lines: list[str]
+    triangles: np.ndarray | None = None   # ready-made fill triangles (k, 3, 2), if the engine has them
 
 
 class TextEngine(Protocol):

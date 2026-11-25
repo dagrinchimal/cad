@@ -3,21 +3,25 @@
 A friendly 2D/3D CAD program for Windows with AutoCAD-style commands, three unit systems
 (millimeters, fractional inches, feet-inches), and a built-in help system.
 
-**Status:** Phase 2 of 7 (core drafting). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full plan.
+**Status:** Phase 3 of 7 (full 2D drafting). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full plan.
 
-## What works now (Phase 2)
+## What works now
 
-- **Drawing:** Line, Polyline (with arc segments), Circle (center/radius, diameter, 2-point, 3-point), Arc (3-point, start-center-end, center-start-end), Point
-- **Editing:** Erase, unlimited Undo/Redo, Properties panel (edit coordinates, radius, length… in any unit)
+- **Drawing:** Line, Polyline (with arcs), Circle (4 ways), Arc (3 ways), Rectangle, Polygon, Ellipse and elliptical arc, Spline, Point, Hatch (click inside an area; finds islands; 15 patterns + solid), Boundary
+- **Text:** single-line text with justification, multiline text that wraps in a box, using your system's TrueType fonts
+- **Dimensions:** linear, aligned, angular, radius, diameter, ordinate, leaders; dimension styles (arrow type, sizes, overall scale); measured text always in the drawing's units, with overrides like `<> TYP`
+- **Editing:** Move, Copy, Rotate, Scale, Mirror, Offset, Trim, Extend, Fillet, Chamfer, rectangular and polar arrays, Break, Break at Point, Join, Explode, Stretch, Erase; unlimited Undo/Redo; double-click text, notes, dimensions and blocks to edit them
+- **Organization:** layers (color, linetype, lineweight, on/off, freeze, lock), blocks with attributes (BLOCK, INSERT, ATTDEF), groups
+- **Layouts:** paper-space sheets (ISO A4–A0, Letter to ARCH E) with an automatic border and title block whose fields you fill in, viewports at standard scales (1:50, 1/4" = 1'-0"…) or "scale to fit"
+- **Parametric constraints:** coincident, collinear, concentric, fix, parallel, perpendicular, horizontal, vertical, tangent, symmetric, equal; driving dimensions (linear, aligned, radius, diameter, angle) with formulas like `d1*2`; edits keep constraints satisfied; over-constraining is detected
 - **Units:** millimeters, fractional inches (1/2 to 1/64), architectural feet-inches. Type any format anywhere: `25.4mm`, `1 1/2"`, `3'-4 1/2"`, `3' 4.5`
-- **Precise input:** `x,y`, `@dx,dy`, `@distance<angle`, or type a distance to go that far in the cursor direction
-- **Snaps:** endpoint, midpoint, center, intersection, perpendicular, tangent, nearest, quadrant, node, extension, plus grid snap, ortho, polar tracking and object snap tracking, with markers and tooltips
-- **Layers:** color, linetype, lineweight, on/off, freeze, lock
-- **Files:** native `.cadz` format (open, documented, versioned), autosave and crash recovery
-- **Interface:** ribbon with icons and labels, command line that doubles as search (`circ` → Circle), status bar with prompt, coordinates and toggles, context menus, light/dark theme, adjustable UI size
+- **Precise input:** `x,y`, `@dx,dy`, `@distance<angle`, or a distance in the cursor direction
+- **Snaps:** endpoint, midpoint, center, intersection, perpendicular, tangent, nearest, quadrant, node, extension, insertion; grid snap, ortho, polar tracking, object snap tracking
+- **Files:** native `.cadz` (open, documented, versioned), autosave and crash recovery
+- **Interface:** ribbon (Home, Annotate, Parametric, Layout, View) with icons and labels, command line that doubles as search, status bar, context menus, Properties panel for every object type, light/dark themes, adjustable UI size
 - **Speed:** GPU rendering; tested with 50,000+ objects
 
-Not yet: trim/offset/fillet and other edit tools, text, dimensions, hatch, blocks (Phase 3); DXF/DWG/PDF and other formats (Phase 4); full help (Phase 5); 3D (Phase 6); installer (Phase 7).
+Not yet: DXF/DWG/PDF and other formats, printing (Phase 4); full help (Phase 5); 3D (Phase 6); installer (Phase 7).
 
 ## Keyboard basics
 

@@ -9,7 +9,11 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QComboBox, QFormLayout, QLabel, QLineEdit, QScrollArea, QVBoxLayout, QWidget
 
 from ..core.geom2d.vec import dist
-from ..core.model import Arc, Circle, Document, Entity, Line, Point, Polyline
+from ..core.model import (
+    Arc, BlockReference, Circle, Dimension, Document, Ellipse, Entity, Hatch, Leader, Line, MText, Point, Polyline,
+    Spline, Text, Viewport,
+)
+from ..core.model.hatch_patterns import PATTERN_NAMES
 from ..core.units import format_angle, format_length, parse_angle, UnitParseError
 from .widgets import ColorCombo, LengthEdit, LinetypeCombo, LineweightCombo
 
@@ -168,12 +172,136 @@ class PropertiesPanel(QWidget):
         elif isinstance(e, Point):
             self._len("X", e.position[0], lambda v: replace(e, position=(v, e.position[1])))
             self._len("Y", e.position[1], lambda v: replace(e, position=(e.position[0], v)))
+        elif isinstance(e, Ellipse):
+            self._len("Center X", e.center[0], lambda v: replace(e, center=(v, e.center[1])))
+            self._len("Center Y", e.center[1], lambda v: replace(e, center=(e.center[0], v)))
+            ml = e.major_length
+
+            def set_major(v):
+                k = v / ml if ml else 1
+                return replace(e, major=(e.major[0] * k, e.major[1] * k), ratio=min(1.0, e.ratio / k))
+            self._len("Major radius", ml, set_major, positive=True)
+            self._len("Minor radius", ml * e.ratio, lambda v: replace(e, ratio=min(1.0, v / ml)) if ml else None,
+                      positive=True)
+            if e.is_full:
+                self._ro("Area", f"{format_length(math.sqrt(e.area()), u)} squared")
+        elif isinstance(e, Spline):
+            self._ro("Fit points", str(len(e.fit_points)))
+            self._ro("Closed", "Yes" if e.closed else "No")
+            self._ro("Length", format_length(e.length(), u))
+        elif isinstance(e, (Text, MText)):
+            self._text("Text", e.text, lambda t: replace(e, text=t), multiline=isinstance(e, MText))
+            self._len("Height", e.height, lambda v: replace(e, height=v), positive=True)
+            self._ang("Rotation", e.rotation, lambda a: replace(e, rotation=a))
+            self._len("X", e.insert[0], lambda v: replace(e, insert=(v, e.insert[1])))
+            self._len("Y", e.insert[1], lambda v: replace(e, insert=(e.insert[0], v)))
+            if isinstance(e, MText):
+                self._len("Box width (0 = none)", e.width, lambda v: replace(e, width=max(0.0, v)))
+            self._choice("Justify", ["left", "center", "right"], e.halign, lambda v: replace(e, halign=v))
+        elif isinstance(e, Hatch):
+            self._choice("Pattern", list(PATTERN_NAMES), e.pattern, lambda v: replace(e, pattern=v))
+            self._num("Pattern scale", e.pattern_scale, lambda v: replace(e, pattern_scale=v) if v > 0 else None)
+            self._ang("Pattern angle", e.pattern_angle, lambda a: replace(e, pattern_angle=a))
+            self._ro("Area", f"{format_length(math.sqrt(e.area()), u)} squared")
+        elif isinstance(e, Dimension):
+            val = e.measurement()
+            self._ro("Measurement", f"{math.degrees(val):.4g}°" if e.dimtype == "angular" else format_length(val, u))
+            self._text("Text override", e.text, lambda t: replace(e, text=t))
+            self._ro("Hint", "Leave empty for the measured value; <> stands for it, e.g. <> TYP")
+            styles = list(self.get_doc().dimstyles)
+            self._choice("Style", styles, e.style, lambda v: replace(e, style=v))
+        elif isinstance(e, Leader):
+            self._text("Note", e.text, lambda t: replace(e, text=t), multiline=True)
+        elif isinstance(e, BlockReference):
+            self._ro("Block", e.name)
+            self._len("X", e.insert[0], lambda v: replace(e, insert=(v, e.insert[1])))
+            self._len("Y", e.insert[1], lambda v: replace(e, insert=(e.insert[0], v)))
+            self._num("Scale", e.sx, lambda v: replace(e, sx=v, sy=v * (1 if e.sy >= 0 else -1)) if v > 0 else None)
+            self._ang("Rotation", e.rotation, lambda a: replace(e, rotation=a))
+            bdef = self.get_doc().blocks.get(e.name)
+            for ad in (bdef.attdefs() if bdef else []):
+                self._text(ad.prompt or ad.tag, e.attrib(ad.tag, ad.default),
+                           lambda t, tag=ad.tag: e.with_attrib(tag, t))
+        elif isinstance(e, Viewport):
+            self._viewport_rows(e)
         elif isinstance(e, Polyline):
             self._ro("Vertices", str(len(e.vertices)))
             self._ro("Closed", "Yes" if e.closed else "No")
             self._ro("Length", format_length(e.length(), u))
             if e.closed:
                 self._ro("Area", f"{format_length(math.sqrt(abs(e.area())), u)} squared")
+
+    def _text(self, label: str, text: str, apply, multiline: bool = False) -> None:
+        w = QLineEdit(text.replace("\n", " ⏎ ") if multiline else text)
+        if multiline:
+            w.setToolTip("Double-click the text in the drawing to edit it with line breaks")
+
+        def done():
+            if not w.isModified():
+                return
+            w.setModified(False)
+            t = w.text().replace(" ⏎ ", "\n") if multiline else w.text()
+            self._replace(apply(t))
+        w.editingFinished.connect(done)
+        self.geo.addRow(label, w)
+
+    def _num(self, label: str, value: float, apply) -> None:
+        w = QLineEdit(f"{value:g}")
+
+        def done():
+            if not w.isModified():
+                return
+            w.setModified(False)
+            try:
+                v = float(w.text())
+            except ValueError:
+                w.setStyleSheet("border: 1px solid #d33;")
+                return
+            self._replace(apply(v))
+        w.editingFinished.connect(done)
+        self.geo.addRow(label, w)
+
+    def _choice(self, label: str, options: list[str], current: str, apply) -> None:
+        cb = QComboBox()
+        cb.addItems(options)
+        if current not in options:
+            cb.addItem(current)
+        cb.setCurrentText(current)
+        cb.activated.connect(lambda i: self._replace(apply(cb.itemText(i))))
+        self.geo.addRow(label, cb)
+
+    def _viewport_rows(self, e: Viewport) -> None:
+        from ..core.units import standard_scales
+        u = self.get_doc().header.units
+        cb = QComboBox()
+        cb.addItem("Scale to fit", None)
+        for sc in standard_scales(u.mode):
+            cb.addItem(sc.name, sc.factor)
+        if e.fit:
+            cb.setCurrentIndex(0)
+        else:
+            idx = next((i for i in range(1, cb.count()) if abs(cb.itemData(i) - e.scale) < 1e-12), -1)
+            if idx < 0:
+                cb.addItem(f"Custom (1:{1 / e.scale:.4g})", e.scale)
+                idx = cb.count() - 1
+            cb.setCurrentIndex(idx)
+
+        def chosen(i):
+            f = cb.itemData(i)
+            if f is None:
+                self._replace(replace(e, fit=True))
+                return
+            # keep showing the same middle of the model when switching from "fit"
+            from ..core.layouts import resolve_viewport
+            idx_ = getattr(self.window(), "index", None)
+            box = idx_.extents("*Model") if idx_ else None
+            center, _ = resolve_viewport(self.get_doc(), e, box)
+            self._replace(replace(e, fit=False, scale=f, view_center=center))
+        cb.activated.connect(chosen)
+        self.geo.addRow("Scale", cb)
+        self._len("Model center X", e.view_center[0], lambda v: replace(e, fit=False, view_center=(v, e.view_center[1])))
+        self._len("Model center Y", e.view_center[1], lambda v: replace(e, fit=False, view_center=(e.view_center[0], v)))
+        self._ro("Paper size", f"{e.width:.0f} x {e.height:.0f} mm")
 
     # ------------------------------------------------------------------ edits
     def _replace(self, new: Entity | None) -> None:

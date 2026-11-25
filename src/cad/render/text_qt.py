@@ -36,6 +36,16 @@ def _outline(font_name: str, text: str) -> tuple[np.ndarray, ...]:
     return tuple(out)
 
 
+@lru_cache(maxsize=4096)
+def _glyph(font_name: str, ch: str) -> tuple[np.ndarray, float]:
+    """Triangles of one character in font units (cached), and its advance width."""
+    from ..core.geom2d.fill import triangulate
+    _, fm, _ = _font(font_name)
+    loops = list(_outline(font_name, ch)) if ch.strip() else []
+    tris = triangulate(loops).reshape(-1, 2) if loops else np.zeros((0, 2))
+    return tris, fm.horizontalAdvance(ch)
+
+
 @lru_cache(maxsize=16384)
 def _advance(font_name: str, text: str) -> float:
     _, fm, _ = _font(font_name)
@@ -57,17 +67,23 @@ class QtTextEngine:
         widths = [measure(t) for t in lines]
         xs, y0 = block_offset(run, widths, lh)
         m = run.transform()
-        loops: list[np.ndarray] = []
+        chunks: list[np.ndarray] = []
         for i, (t, x) in enumerate(zip(lines, xs)):
             if not t.strip():
                 continue
             yb = y0 - i * lh
-            for lp in _outline(font_name, t):
-                local = np.column_stack((lp[:, 0] * sx + x, lp[:, 1] * s + yb))
-                loops.append(m.apply_array(local))
+            # glyph-by-glyph: each character is triangulated once and reused everywhere
+            scale_line = measure(t) / max(sum(_glyph(font_name, ch)[1] for ch in t) * sx, 1e-12)
+            pen = 0.0
+            for ch in t:
+                tris, adv = _glyph(font_name, ch)
+                if len(tris):
+                    chunks.append(np.column_stack(((tris[:, 0] + pen) * sx * scale_line + x, tris[:, 1] * s + yb)))
+                pen += adv
+        triangles = m.apply_array(np.vstack(chunks)).reshape(-1, 3, 2) if chunks else np.zeros((0, 3, 2))
         x_min = min(xs) if xs else 0.0
         x_max = max((x + w for x, w in zip(xs, widths)), default=0.0)
         top = y0 + run.height
         bottom = y0 - (len(lines) - 1) * lh - 0.3 * run.height
         box = [m.apply(p) for p in ((x_min, bottom), (x_max, bottom), (x_max, top), (x_min, top))]
-        return TextLayout(loops, box, lines)
+        return TextLayout([], box, lines, triangles)

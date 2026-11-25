@@ -238,3 +238,103 @@ def test_opengl_canvas_renders():
         pytest.skip("OpenGL 3.3 not available here")
     from cad.render.canvas_gl import GLCanvas
     assert GLCanvas
+
+
+# ----------------------------------------------------------------- phase 3
+def test_every_command_has_an_icon_and_ribbon_tabs():
+    from cad.commands import REGISTRY
+    from cad.ui.icons import ICONS
+    missing = [c.name for c in REGISTRY.all() if c.icon not in ICONS and c.group not in ("Application",)]
+    assert not missing, missing
+
+
+def test_ribbon_has_phase3_tabs(win):
+    titles = [win.ribbon.tabbar.tabText(i) for i in range(win.ribbon.tabbar.count())]
+    assert titles == ["Home", "Annotate", "Parametric", "Layout", "View"]
+    names = {t.command for _, t in win.ribbon.buttons}
+    for n in ("TRIM", "HATCH", "DIMLINEAR", "GCPARALLEL", "MVIEW", "INSERT"):
+        assert n in names
+
+
+def test_trim_by_clicking(qtbot, win):
+    with win.doc.transaction("seed"):
+        h = win.doc.add(Line(p1=(0, 0), p2=(100, 0)))
+        win.doc.add(Line(p1=(50, -20), p2=(50, 20)))
+    win.controller.zoom_extents()
+    win.run_command("TRIM")
+    click(qtbot, win, (75, 0))
+    qtbot.keyClick(win.canvas, Qt.Key.Key_Return)
+    lines = [e for e in win.doc.entities.values() if isinstance(e, Line) and e.p1[1] == 0 == e.p2[1]]
+    assert len(lines) == 1 and max(lines[0].p1[0], lines[0].p2[0]) == pytest.approx(50)
+    assert h.handle not in win.doc.entities
+
+
+def test_hatch_by_clicking_inside(qtbot, win):
+    from cad.core.model import Hatch
+    with win.doc.transaction("seed"):
+        win.doc.add(Polyline(vertices=((0, 0, 0), (100, 0, 0), (100, 60, 0), (0, 60, 0)), closed=True))
+    win.controller.zoom_extents()
+    win.run_command("HATCH")
+    click(qtbot, win, (30, 30))
+    qtbot.keyClick(win.canvas, Qt.Key.Key_Return)
+    h = next(e for e in win.doc.entities.values() if isinstance(e, Hatch))
+    assert h.area() == pytest.approx(6000, rel=1e-6)
+
+
+def test_layout_tab_viewport_and_scale(qtbot, win):
+    from cad.core.model import Viewport
+    with win.doc.transaction("seed"):
+        win.doc.add(Circle(center=(0, 0), radius=500))
+    i = [win.layout_tabs.tabData(k) for k in range(win.layout_tabs.count())].index("+Layout1")
+    win.layout_tabs.setCurrentIndex(i)
+    assert win.controller.space == "Layout1" and "Layout1" in win.doc.layouts
+    assert win.canvas.data.viewports and len(win.canvas.data.model) > 0
+    vp = next(e for e in win.doc.entities.values() if isinstance(e, Viewport))
+    win.ctx.selection = {vp.handle}
+    win.properties.refresh()
+    from PySide6.QtWidgets import QComboBox
+    cb = next(c for c in win.properties.findChildren(QComboBox) if c.count() and c.itemText(0) == "Scale to fit")
+    k = cb.findText("1:10")
+    cb.setCurrentIndex(k)
+    cb.activated.emit(k)
+    vp2 = win.doc.get(vp.handle)
+    assert not vp2.fit and vp2.scale == pytest.approx(0.1)
+    win.layout_tabs.setCurrentIndex(0)
+    assert win.controller.space == "*Model"
+
+
+def test_double_click_edits_text(qtbot, win, monkeypatch):
+    from cad.core.model import Text
+    from cad.ui import dialogs
+    with win.doc.transaction("seed"):
+        t = win.doc.add(Text(insert=(0, 0), text="Old", height=10))
+    win.controller.zoom_extents()
+    monkeypatch.setattr(dialogs.TextDialog, "exec", lambda self: True)
+    monkeypatch.setattr(dialogs.TextDialog, "text", lambda self: "New text")
+    win.edit_object(win.doc.get(t.handle))
+    assert win.doc.get(t.handle).text == "New text"
+
+
+def test_mtext_opens_editor(qtbot, win, monkeypatch):
+    from cad.core.model import MText
+    from cad.ui import dialogs
+    monkeypatch.setattr(dialogs.TextDialog, "exec", lambda self: True)
+    monkeypatch.setattr(dialogs.TextDialog, "text", lambda self: "Line 1\nLine 2")
+    type_line(qtbot, win, "MTEXT")
+    type_line(qtbot, win, "0,0")
+    type_line(qtbot, win, "100,-50")
+    qtbot.waitUntil(lambda: any(isinstance(e, MText) for e in win.doc.entities.values()), timeout=2000)
+    m = next(e for e in win.doc.entities.values() if isinstance(e, MText))
+    assert m.text == "Line 1\nLine 2"
+
+
+def test_constraint_symbols_drawn(qtbot, win):
+    from cad.core.constraints import Constraint
+    with win.doc.transaction("seed"):
+        a = win.doc.add(Line(p1=(0, 0), p2=(10, 1)))
+    with win.doc.transaction("c"):
+        win.doc.set_item("constraint", 1, Constraint(1, "horizontal", ((a.handle, "line"),)))
+    assert win.doc.get(a.handle).p1[1] == pytest.approx(win.doc.get(a.handle).p2[1], abs=1e-7)
+    win.controller.zoom_extents()
+    img = win.canvas.grab_image()
+    assert not img.isNull()

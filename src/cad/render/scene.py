@@ -180,8 +180,7 @@ class SceneBuilder:
                     out[:, 10] = lt
                     out[:, 11] = lts
                     seg_blocks.append(out)
-            for loops in part.fills:
-                tris = triangulate(loops)
+            for tris in [triangulate(loops) for loops in part.fills] + list(part.triangles):
                 if len(tris) == 0:
                     continue
                 v = tris.reshape(-1, 2)

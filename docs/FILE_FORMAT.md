@@ -1,4 +1,4 @@
-# The .cadz file format (version 1.0.0)
+# The .cadz file format (version 1.1.0)
 
 A `.cadz` file is a standard ZIP archive. Rename it to `.zip` to look inside.
 
@@ -81,6 +81,36 @@ Geometry by type:
 | `arc` | `center`, `radius`, `start_angle`, `end_angle` (counter-clockwise from start to end) |
 | `polyline` | `vertices: [[x, y, bulge], ...]`, `closed: bool`. Bulge = tan(¼ of the arc angle) of the segment starting at that vertex; positive = counter-clockwise, 0 = straight |
 | `point` | `position: [x, y]` |
+
+### Entity types added in 1.1
+
+| Type | Keys |
+|---|---|
+| `ellipse` | `center`, `major` (vector to the end of the major axis), `ratio` (minor/major), `start_param`, `end_param` |
+| `spline` | `control_points`, `knots`, `degree`, `fit_points`, `closed` (cubic B-spline; passes through `fit_points`) |
+| `text` | `insert`, `text`, `height` (capital height), `rotation`, `width_factor`, `halign` (left/center/right), `valign` (baseline/bottom/middle/top), `font` |
+| `mtext` | `insert`, `text` (`\n` = new line), `height`, `width` (wrap width, 0 = none), `rotation`, `halign`, `valign`, `line_spacing`, `font` |
+| `hatch` | `loops` (list of closed vertex loops `[x, y, bulge]`, even-odd), `pattern` (`SOLID`, `ANSI31`…), `pattern_scale`, `pattern_angle` |
+| `dimension` | `dimtype` (linear/aligned/angular/radius/diameter/ordinate), `p1`, `p2`, `p3`, `location`, `angle`, `axis`, `text` (override; `<>` = measured), `style`, `origin` |
+| `leader` | `points`, `text`, `style` |
+| `attdef` | `tag`, `prompt`, `default`, `insert`, `height`, `rotation`, `halign`, `valign`, `invisible`, `font`, `width_factor` |
+| `insert` | `name` (block), `insert`, `sx`, `sy`, `rotation`, `attribs` (`[[tag, value], …]`) |
+| `viewport` | `center`, `width`, `height` (paper mm), `view_center` (model), `scale` (paper per model), `locked`, `fit` |
+
+Every entity may also have `space`: omitted for model space, otherwise the name of the layout it sits on.
+
+### Tables added in 1.1
+
+| Key | Contents |
+|---|---|
+| `blocks` | `[{name, base, description, entities: [...]}]` — entity handles are local to the block |
+| `dimstyles` | `[{name, text_height, arrow_size, arrow, ext_offset, ext_extension, text_gap, center_mark, scale, decimal_places, font}]` |
+| `groups` | `[{name, handles, description}]` |
+| `layouts` | `[{name, paper, width, height, order, portrait}]` |
+| `constraints` | `[{id, kind, refs: [[handle, part], …], name, expression, values}]` (see `core/constraints/model.py` for parts and kinds) |
+
+New header keys: `text_height`, `current_dimstyle`, `hatch_pattern`, `hatch_scale`, `hatch_angle`.
+Version 1.0 files open unchanged (all additions have defaults).
 
 ## Compatibility rules
 

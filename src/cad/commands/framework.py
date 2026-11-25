@@ -55,6 +55,11 @@ class Request:
     default: Any = None                      # used when Enter is pressed
     default_text: str = ""
 
+    def __post_init__(self) -> None:
+        keys = [k.shortcut for k in self.keywords]
+        if len(keys) != len(set(keys)):
+            raise ValueError(f"Duplicate keyword shortcuts in prompt '{self.prompt}': {keys}")
+
     def full_prompt(self) -> str:
         text = self.prompt
         if self.keywords:
@@ -567,6 +572,9 @@ class CommandRunner:
                     self._send({h for h, e in self.ctx.doc.entities.items() if self.ctx.doc.is_visible(e)})
                 else:
                     raise InputError("Pick objects, type ALL, or press Enter when done")
+            elif isinstance(req, GetEntity):
+                opts = ", ".join(k.name for k in req.keywords)
+                raise InputError("Click on an object in the drawing" + (f", or type one of: {opts}" if opts else ""))
             else:
                 raise InputError("Choose one of the options: " + ", ".join(k.name for k in req.keywords))
         except (InputError, UnitParseError) as exc:

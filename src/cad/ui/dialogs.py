@@ -620,3 +620,26 @@ class ParametersDialog(QDialog):
         except (ConstraintError, ExpressionError, ValueError) as exc:
             QMessageBox.warning(self, "Parameters", str(exc))
         self.reload()
+
+
+class AttributesDialog(QDialog):
+    """Fill in a block's attributes (title block fields, tags…)."""
+
+    def __init__(self, fields: list[tuple[str, str, str]], parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Edit attributes")
+        self.edits: dict[str, QLineEdit] = {}
+        f = QFormLayout()
+        for tag, prompt, value in fields:
+            w = QLineEdit(value)
+            self.edits[tag] = w
+            f.addRow(prompt, w)
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        lay = QVBoxLayout(self)
+        lay.addLayout(f)
+        lay.addWidget(bb)
+
+    def values(self) -> dict[str, str]:
+        return {t: w.text() for t, w in self.edits.items()}

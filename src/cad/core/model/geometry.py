@@ -30,6 +30,7 @@ MAX_BLOCK_DEPTH = 12
 class Part:
     prims: list[Primitive] = field(default_factory=list)
     fills: list[list[np.ndarray]] = field(default_factory=list)   # each: loops filled together (even-odd)
+    triangles: list[np.ndarray] = field(default_factory=list)     # already triangulated fills (k, 3, 2)
     texts: list[TextRun] = field(default_factory=list)
     color: object = None          # None: use the entity's own effective style
     linetype: str | None = None
@@ -104,6 +105,8 @@ def text_part(run: TextRun) -> tuple[Part, list[np.ndarray]]:
     lay = text_engine().layout(run)
     box = np.array(lay.box, dtype=np.float64)
     part = Part(fills=[lay.loops] if lay.loops else [], texts=[run])
+    if lay.triangles is not None and len(lay.triangles):
+        part.triangles.append(lay.triangles)
     return part, box
 
 
@@ -249,6 +252,7 @@ def _transform_geometry(cg: Geometry, m: Affine2, sf: float) -> Geometry:
         for p in part.prims:
             np_.prims.extend(transform_prim(p, m))
         np_.fills = [[m.apply_array(lp) for lp in loops] for loops in part.fills]
+        np_.triangles = [m.apply_array(t.reshape(-1, 2)).reshape(-1, 3, 2) for t in part.triangles]
         np_.texts = [TextRun(r.text, m.apply(r.insert), r.height * sf, r.rotation + m.rotation, r.width_factor,
                              r.halign, r.valign, r.font, r.wrap_width * sf, r.line_spacing, r.multiline)
                      for r in part.texts]

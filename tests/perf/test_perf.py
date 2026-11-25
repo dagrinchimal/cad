@@ -72,7 +72,7 @@ def test_scene_build_and_incremental_update(doc):
     b.set_origin((50_000, 30_000))
     b.set_tolerance(5.0)
     opts = StyleOptions()
-    inst, t = timed(b.build, opts)
+    (inst, _tris), t = timed(b.build, opts)
     print(f"  scene cold build: {t:.2f}s, {len(inst):,} segments ({inst.nbytes / 1e6:.0f} MB)")
     assert t < 20
     h = next(iter(doc.entities))
@@ -109,3 +109,20 @@ def test_pan_zoom_cost_is_independent_of_size(doc):
     assert not b.dirty
     b.detach()
     _ = math.pi
+
+
+def test_text_and_hatch_heavy_drawing():
+    """5,000 texts + 500 patterned hatches stay workable."""
+    from cad.core.model import Hatch, Text
+    doc = Document()
+    with doc.transaction("bulk"):
+        for i in range(5000):
+            doc.add(Text(insert=(i % 100 * 50, i // 100 * 20), text=f"Room {i}", height=5))
+        for i in range(500):
+            x, y = i % 25 * 200, i // 25 * 200
+            doc.add(Hatch(loops=(((x, y, 0), (x + 150, y, 0), (x + 150, y + 150, 0), (x, y + 150, 0)),),
+                          pattern="ANSI31", pattern_scale=4))
+    b = SceneBuilder(doc)
+    (segs, tris), t = timed(b.build, StyleOptions())
+    print(f"  5,000 texts + 500 hatches build: {t:.2f}s, {len(segs):,} segments")
+    assert t < 30

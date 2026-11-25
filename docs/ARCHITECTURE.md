@@ -1,6 +1,6 @@
 # Architecture Plan — Phase 1
 
-Status: **Approved** (Phase 1 complete).
+Status: **Approved**. Phases 1–3 complete.
 
 App name: **CAD: Calling All Dumbies** (Python package `cad`, executable `CAD.exe`, file extension `.cadz`).
 

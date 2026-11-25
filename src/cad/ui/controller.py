@@ -41,6 +41,7 @@ class CanvasController(QObject):
     selection_changed = Signal()
     context_menu_requested = Signal(QPoint)
     forward_text = Signal(str)
+    edit_requested = Signal(object)
     view_changed_signal = Signal()
 
     def __init__(self, canvas, doc: Document, index: SpatialIndex, runner: CommandRunner,
@@ -299,7 +300,7 @@ class CanvasController(QObject):
             s_, f_ = self.builder.build_entities(ents, self.opts)
             segs.append(s_)
             fills.append(f_)
-        base = req.base
+        base = getattr(req, "base", None)
         rubber = getattr(req, "rubber", "line") if isinstance(req, GetPoint) else "line"
         if base is not None and rubber == "line" and dist(base, pt) > 0:
             s_, _ = self.builder.build_entities([Line(p1=base, p2=pt)], self.opts)
@@ -530,6 +531,12 @@ class CanvasController(QObject):
     def on_double_click(self, ev) -> None:
         if ev.button() == Qt.MouseButton.MiddleButton:
             self.zoom_extents()
+        elif ev.button() == Qt.MouseButton.LeftButton and not self.runner.is_active:
+            pos = ev.position()
+            self.window_start = None
+            hit = self.index.pick(self.view.to_model(pos.x(), pos.y()), PICKBOX_PX * self.view.pixel)
+            if hit is not None:
+                self.edit_requested.emit(hit)
 
     def on_wheel(self, ev) -> None:
         steps = ev.angleDelta().y() / 120.0

@@ -269,9 +269,10 @@ def closed_loop_of(e) -> tuple | None:
 def pick_area(ctx: CommandContext, pt):
     """Loops around pt from the visible objects in the current space."""
     doc = ctx.doc
-    rect = ctx.view.visible_rect() if hasattr(ctx.view, "visible_rect") else None
-    if rect is None:
-        rect = ctx.index.extents()
+    # search the whole space when it's small enough; otherwise only what's on screen (like AutoCAD)
+    rect = ctx.index.extents()
+    if rect is not None and len(ctx.index.query(rect)) > 20_000:
+        rect = ctx.view.visible_rect() if hasattr(ctx.view, "visible_rect") else rect
     if rect is None:
         return None, 1.0
     size = max(rect[2] - rect[0], rect[3] - rect[1], 1e-9)
@@ -298,7 +299,8 @@ def hatch_cmd(ctx: CommandContext):
     names = "/".join(PATTERN_NAMES)
     while True:
         r = yield GetPoint(f"Pick internal point (pattern {pattern}, scale {scale:g}, angle "
-                           f"{math.degrees(angle):g}°)", keywords=kw("Select objects", "Pattern", "Scale", "Angle"),
+                           f"{math.degrees(angle):g}°)", keywords=(Keyword("Select objects", "S"), Keyword("Pattern", "P"),
+                                                  Keyword("Scale", "SC"), Keyword("Angle", "A")),
                            allow_none=True, rubber=None)
         if r is None:
             break
