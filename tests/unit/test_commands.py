@@ -208,3 +208,71 @@ def test_failing_command_rolls_back(runner):
     assert len(runner.ctx.doc) == 0
     assert "kaboom" in runner.ctx.messages[-1]
     assert not r.is_active
+
+
+# ------------------------------------------------------------- phase 3 drawing commands
+def test_rectangle_polygon_ellipse_spline(runner):
+    from cad.core.model import Ellipse, Spline
+    typed(runner, "REC", "0,0", "10,5")
+    typed(runner, "REC", "20,0", "D", "4", "3", "30,10")
+    typed(runner, "POL", "6", "0,0", "C", "@10<0")
+    typed(runner, "POL", "", "E", "0,0", "10,0")          # Enter keeps 6 sides
+    typed(runner, "EL", "0,0", "20,0", "5")
+    typed(runner, "EL", "A", "C", "0,0", "10,0", "5", "10,0", "0,10")
+    typed(runner, "SPL", "0,0", "10,10", "20,0", "30,10")
+    runner.submit_enter()
+    pls = ents(runner, Polyline)
+    assert pls[0].area() == pytest.approx(50)
+    assert abs(pls[1].area()) == pytest.approx(12)
+    hexagon = pls[2]
+    assert len(hexagon.vertices) == 6
+    assert math.dist(hexagon.vertices[0][:2], (0, 0)) == pytest.approx(10 / math.cos(math.pi / 6))
+    assert len(pls[3].vertices) == 6
+    els = ents(runner, Ellipse)
+    assert els[0].major_length == pytest.approx(10) and els[0].ratio == pytest.approx(0.5)
+    assert not els[1].is_full and els[1].sweep == pytest.approx(math.pi / 2, abs=1e-6)
+    assert len(ents(runner, Spline)[0].fit_points) == 4
+
+
+def test_text_and_mtext(runner):
+    from cad.core.model import MText, Text
+    typed(runner, "DT", "0,0", "5", "0", "First line", "Second line")
+    runner.submit_enter()
+    t = ents(runner, Text)
+    assert [x.text for x in t] == ["First line", "Second line"]
+    assert t[1].insert[1] < t[0].insert[1]
+    typed(runner, "T", "0,100", "50,80")
+    runner.submit_text("Line A\nLine B")
+    m = ents(runner, MText)[0]
+    assert m.width == pytest.approx(50) and "\n" in m.text
+
+
+def test_hatch_pick_point_with_island(runner):
+    from cad.core.model import Circle, Hatch
+    doc = runner.ctx.doc
+    with doc.transaction("s"):
+        for a, b in [((0, 0), (100, 0)), ((100, 0), (100, 50)), ((100, 50), (0, 50)), ((0, 50), (0, 0))]:
+            doc.add(Line(p1=a, p2=b))
+        doc.add(Circle(center=(50, 25), radius=10))
+    typed(runner, "H", "P", "SOLID", "10,10")
+    runner.submit_enter()
+    h = ents(runner, Hatch)[0]
+    assert h.pattern == "SOLID" and len(h.loops) == 2
+    assert h.area() == pytest.approx(5000 - math.pi * 100, rel=1e-3)
+    typed(runner, "H", "200,200")          # outside everything
+    assert "isn't inside" in runner.ctx.messages[-1]
+    runner.cancel()
+
+
+def test_hatch_select_objects_and_boundary(runner):
+    from cad.core.model import Circle, Hatch
+    doc = runner.ctx.doc
+    with doc.transaction("s"):
+        c = doc.add(Circle(center=(0, 0), radius=5))
+    typed(runner, "H", "S")
+    runner.submit_selection({c.handle})
+    runner.submit_enter()
+    assert ents(runner, Hatch)[0].area() == pytest.approx(math.pi * 25, rel=1e-2)
+    typed(runner, "BO", "1,1")
+    runner.submit_enter()
+    assert any(p.closed for p in ents(runner, Polyline))

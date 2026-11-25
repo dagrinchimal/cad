@@ -89,13 +89,28 @@ class GetDistance(Request):
 
 
 @dataclass(slots=True)
+class GetAngle(Request):
+    """Typed angle (degrees, or any angle format) or a point picked relative to `base`."""
+    base: Vec | None = None
+    preview: PreviewFn | None = None
+
+
+@dataclass(slots=True)
+class GetNumber(Request):
+    """A plain number without units (counts, scale factors)."""
+    integer: bool = False
+    minimum: float | None = None
+
+
+@dataclass(slots=True)
 class GetKeyword(Request):
     pass
 
 
 @dataclass(slots=True)
 class GetString(Request):
-    pass
+    multiline: bool = False       # the UI shows a text editor dialog
+    initial: str = ""
 
 
 @dataclass(slots=True)
@@ -109,6 +124,7 @@ def kw(*names: str) -> tuple[Keyword, ...]:
 
 # ------------------------------------------------------------------ context
 class ViewApi(Protocol):
+    def visible_rect(self): ...
     def zoom_extents(self) -> None: ...
     def zoom_window(self, p1: Vec, p2: Vec) -> None: ...
     def zoom_previous(self) -> bool: ...
@@ -121,6 +137,9 @@ class UiApi(Protocol):
 
 
 class _NullView:
+    def visible_rect(self):
+        return None
+
     def zoom_extents(self) -> None: ...
     def zoom_window(self, p1: Vec, p2: Vec) -> None: ...
     def zoom_previous(self) -> bool: return False
@@ -440,6 +459,11 @@ class CommandRunner:
                 self.ctx.echo("Type a distance")
                 return
             self._send(dist(req.base, pt))
+        elif isinstance(req, GetAngle):
+            if req.base is None or dist(req.base, pt) <= 0:
+                self.ctx.echo("Type an angle")
+                return
+            self._send(math.atan2(pt[1] - req.base[1], pt[0] - req.base[0]))
 
     def submit_selection(self, handles: set[int]) -> None:
         if isinstance(self.request, GetSelection):
@@ -468,10 +492,14 @@ class CommandRunner:
             if not t:
                 return self.repeat_last()
             return self.run(t)
+        req = self.request
+        if isinstance(req, GetString) and text.strip("\n"):
+            k = req.match_keyword(t) if req.keywords else None
+            self._send(k.name if k else text)
+            return True
         if not t:
             self.submit_enter()
             return True
-        req = self.request
         k = req.match_keyword(t)
         if k is not None:
             self._send(k.name)
@@ -495,6 +523,20 @@ class CommandRunner:
                 self._send(value)
             elif isinstance(req, GetString):
                 self._send(text)
+            elif isinstance(req, GetAngle):
+                self._send(math.radians(parse_angle(t)))
+            elif isinstance(req, GetNumber):
+                try:
+                    v = float(t)
+                except ValueError as exc:
+                    raise InputError("Enter a number") from exc
+                if req.integer:
+                    if v != int(v):
+                        raise InputError("Enter a whole number")
+                    v = int(v)
+                if req.minimum is not None and v < req.minimum:
+                    raise InputError(f"The value must be at least {req.minimum:g}")
+                self._send(v)
             elif isinstance(req, GetSelection):
                 if t.upper() == "ALL":
                     self._send({h for h, e in self.ctx.doc.entities.items() if self.ctx.doc.is_visible(e)})

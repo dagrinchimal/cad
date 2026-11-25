@@ -282,6 +282,9 @@ class MainWindow(QMainWindow):
         self.runner.run("REDO")
 
     # ================================================================ ViewApi for commands
+    def visible_rect(self):
+        return self.controller.view.visible_rect()
+
     def zoom_extents(self) -> None:
         self.controller.zoom_extents()
 
