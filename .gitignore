@@ -5,8 +5,7 @@ build/
 dist/
 .pytest_cache/
 *.cadz.tmp
-data/
+/data/
 portable.flag
 *.png
-!tests/data/**
 !docs/**/*.png
