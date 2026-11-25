@@ -62,6 +62,7 @@ class CanvasController(QObject):
         self.window_start: tuple[float, float] | None = None
         self.window_dragged = False
         self.pan_last: QPointF | None = None
+        self.show_constraints = True
         self.space = MODEL_SPACE
         self.layout_views: dict[str, tuple[float, float, float]] = {}   # remembered view per space
         self.view_history: list[ViewState] = []
@@ -663,8 +664,90 @@ class CanvasController(QObject):
             p.setPen(QPen(self.track, 1.5))
             p.drawLine(QPointF(x - 6, y - 6), QPointF(x + 6, y + 6))
             p.drawLine(QPointF(x - 6, y + 6), QPointF(x + 6, y - 6))
+        if self.show_constraints and self.doc.constraints:
+            self._paint_constraints(p)
         self._paint_cursor(p)
         self._paint_ucs(p)
+
+    GLYPHS = {"parallel": "∥", "perpendicular": "⊥", "horizontal": "H", "vertical": "V", "collinear": "C/",
+              "concentric": "◎", "equal": "=", "tangent": "T", "fix": "F", "symmetric": "[]", "coincident": "•"}
+
+    def _anchor(self, ref):
+        from ..core.constraints.model import point_refs
+        h, part = ref
+        e = self.doc.entities.get(h)
+        if e is None or e.space != self.space:
+            return None
+        if part in ("line",):
+            return ((e.p1[0] + e.p2[0]) / 2, (e.p1[1] + e.p2[1]) / 2)
+        if part.startswith("seg"):
+            i = int(part[3:])
+            vs = e.vertices
+            a, b = vs[i], vs[(i + 1) % len(vs)]
+            return ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)
+        if part == "circle":
+            return (e.center[0] + e.radius * 0.7071, e.center[1] + e.radius * 0.7071)
+        if part == "all":
+            g = self.doc.geometry(e).bbox
+            return ((g[0] + g[2]) / 2, (g[1] + g[3]) / 2) if g else None
+        for name, pt in point_refs(e):
+            if name == part:
+                return pt
+        return None
+
+    def _paint_constraints(self, p: QPainter) -> None:
+        from ..core.constraints.model import resolve_values
+        try:
+            values = resolve_values(self.doc.constraints)
+        except Exception:                      # noqa: BLE001
+            values = {}
+        f = QFont(p.font())
+        f.setPointSizeF(max(7.0, f.pointSizeF() * 0.85))
+        p.setFont(f)
+        fm = QFontMetrics(f)
+        slots: dict[tuple[int, int], int] = {}
+        bg = QColor(60, 70, 85, 220) if self.dark else QColor(235, 240, 250, 235)
+        fg = QColor(150, 200, 255) if self.dark else QColor(20, 80, 170)
+        u = self.doc.header.units
+        for i, c in enumerate(self.doc.constraints.values()):
+            if i > 500:
+                break
+            if c.kind == "coincident":
+                a = self._anchor(c.refs[0])
+                if a is None:
+                    continue
+                x, y = self.view.to_screen(a)
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(fg)
+                p.drawRect(QRectF(x - 3, y - 3, 6, 6))
+                continue
+            if c.is_dimensional:
+                pts = [self._anchor(r) for r in c.refs]
+                pts = [q for q in pts if q is not None]
+                if not pts:
+                    continue
+                a = (sum(q[0] for q in pts) / len(pts), sum(q[1] for q in pts) / len(pts))
+                v = values.get(c.name)
+                vtxt = "" if v is None else (f"{v:g}°" if c.kind == "angle" else format_length(v, u))
+                text = f"{c.name}={vtxt}"
+                dy = -18
+            else:
+                a = self._anchor(c.refs[0])
+                if a is None:
+                    continue
+                text = self.GLYPHS.get(c.kind, c.kind[:2])
+                dy = 14
+            x, y = self.view.to_screen(a)
+            key = (int(x) // 6, int(y) // 6)
+            k = slots.get(key, 0)
+            slots[key] = k + 1
+            w = fm.horizontalAdvance(text) + 8
+            r = QRectF(x + 8 + k * (w + 2), y + dy - fm.height() / 2, w, fm.height() + 2)
+            p.setPen(QPen(fg, 1))
+            p.setBrush(bg)
+            p.drawRoundedRect(r, 3, 3)
+            p.setPen(fg)
+            p.drawText(r, Qt.AlignmentFlag.AlignCenter, text)
 
     def _paint_points(self, p: QPainter) -> None:
         pts = self.builder.points

@@ -245,6 +245,10 @@ class Document:
             try:
                 for hook in list(self.pre_commit_hooks):
                     hook(self, tx)
+            except BaseException:
+                self._in_hooks = False
+                self.rollback()          # nothing of a refused edit is kept
+                raise
             finally:
                 self._in_hooks = False
         self._tx = None

@@ -172,6 +172,7 @@ class CommandContext:
     ui: UiApi = field(default_factory=_NullUi)
     last_point: Vec | None = None
     space: str = "*Model"
+    constraints: object = None                             # ConstraintManager (set by the UI / tests)
     memory: dict = field(default_factory=dict)            # per-command remembered values
     messages: list[str] = field(default_factory=list)
     on_message: Callable[[str], None] | None = None
@@ -416,7 +417,10 @@ class CommandRunner:
         self.request = None
         self.active = None
         if self._own_tx and self.ctx.doc.in_transaction:
-            self.ctx.doc.commit()
+            try:
+                self.ctx.doc.commit()
+            except Exception as exc:          # noqa: BLE001 - e.g. a change that breaks constraints
+                self.ctx.echo(f"Not done: {exc}")
         self._own_tx = False
         self.ctx.doc.flush()
         self._changed()

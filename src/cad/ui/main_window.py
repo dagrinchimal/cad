@@ -59,8 +59,10 @@ class MainWindow(QMainWindow):
 
         self.doc = doc or self._blank_document()
         self.index = SpatialIndex(self.doc)
+        from ..core.constraints import ConstraintManager
+        self.cmgr = ConstraintManager(self.doc)
         self.ctx = CommandContext(doc=self.doc, index=self.index, view=self, ui=self,
-                                  on_message=self._on_message)
+                                  on_message=self._on_message, constraints=self.cmgr)
         self.runner = CommandRunner(self.ctx, REGISTRY)
 
         # canvas + controller
@@ -345,6 +347,8 @@ class MainWindow(QMainWindow):
             "PROPERTIES": lambda: self.props_dock.setVisible(not self.props_dock.isVisible()),
         }
         handlers["PAGESETUP"] = self.page_setup_dialog
+        handlers["PARAMETERS"] = self.parameters_dialog
+        handlers["CONSTRAINTBAR"] = self.toggle_constraint_display
         handlers["DIMSTYLE"] = self.dimstyle_dialog
         if name.startswith("SHOWLAYOUT:"):
             self.show_space(name.split(":", 1)[1])
@@ -359,6 +363,10 @@ class MainWindow(QMainWindow):
             self.runner.cancel()
         self.doc.remove_listener(self._on_doc_change)
         self.index.detach()
+        self.cmgr.detach()
+        from ..core.constraints import ConstraintManager
+        self.cmgr = ConstraintManager(doc)
+        self.ctx.constraints = self.cmgr
         self.doc = doc
         self.index = SpatialIndex(doc)
         self.ctx.doc = doc
@@ -695,6 +703,15 @@ class MainWindow(QMainWindow):
                 self.doc.set_item("layout", name, lo.with_paper(paper, portrait))
             self.controller.rebuild_scene()
             self.controller.zoom_extents()
+
+    def parameters_dialog(self) -> None:
+        from .dialogs import ParametersDialog
+        ParametersDialog(self.doc, self).exec()
+
+    def toggle_constraint_display(self) -> None:
+        self.controller.show_constraints = not self.controller.show_constraints
+        self.cmdline.append(f"Constraint symbols {'shown' if self.controller.show_constraints else 'hidden'}.")
+        self.canvas.update()
 
     def dimstyle_dialog(self) -> None:
         from .dialogs import DimStyleDialog

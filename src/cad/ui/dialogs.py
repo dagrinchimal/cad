@@ -548,3 +548,75 @@ class DimStyleDialog(QDialog):
         vals = {k: (w._value if w._value is not None else getattr(self.style_, k)) for k, w in self.fields.items()}
         return _r(self.style_, arrow=self.arrow.currentData(), scale=self.scale.value(),
                   decimal_places=self.places.value(), **vals)
+
+
+# ====================================================================== parameters
+
+
+class ParametersDialog(QDialog):
+    """Dimensional constraints: name, expression, current value. Edit an expression to drive the shape."""
+
+    def __init__(self, doc, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Parameters")
+        self.resize(520, 360)
+        self.doc = doc
+        self.table = QTableWidget(0, 3)
+        self.table.setHorizontalHeaderLabels(["Name", "Expression (formula)", "Value"])
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.verticalHeader().setVisible(False)
+        self.table.itemChanged.connect(self._changed)
+        note = QLabel("Type a number (any unit) or a formula using other names, e.g. <b>d1 * 2</b>.")
+        close = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        close.rejected.connect(self.accept)
+        lay = QVBoxLayout(self)
+        lay.addWidget(note)
+        lay.addWidget(self.table)
+        lay.addWidget(close)
+        self.reload()
+
+    def reload(self) -> None:
+        from ..core.constraints.model import resolve_values
+        from ..core.units import format_length
+        self.table.blockSignals(True)
+        self.table.setRowCount(0)
+        try:
+            values = resolve_values(self.doc.constraints)
+        except Exception:                 # noqa: BLE001
+            values = {}
+        for c in sorted((c for c in self.doc.constraints.values() if c.name), key=lambda c: c.name):
+            r = self.table.rowCount()
+            self.table.insertRow(r)
+            name = QTableWidgetItem(c.name)
+            name.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            name.setData(Qt.ItemDataRole.UserRole, c.id)
+            self.table.setItem(r, 0, name)
+            self.table.setItem(r, 1, QTableWidgetItem(c.expression))
+            v = values.get(c.name)
+            shown = "" if v is None else (f"{v:g}°" if c.kind == "angle" else format_length(v, self.doc.header.units))
+            val = QTableWidgetItem(shown)
+            val.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            self.table.setItem(r, 2, val)
+        self.table.blockSignals(False)
+
+    def _changed(self, item) -> None:
+        if item.column() != 1:
+            return
+        from dataclasses import replace as _r
+        from ..core.constraints import ConstraintError, ExpressionError, evaluate
+        from ..core.constraints.model import resolve_values
+        from ..core.units import try_parse_length
+        cid = self.table.item(item.row(), 0).data(Qt.ItemDataRole.UserRole)
+        c = self.doc.constraints.get(cid)
+        text = item.text().strip()
+        try:
+            if c.kind != "angle" and (mm := try_parse_length(text, self.doc.header.units)) is not None:
+                text = f"{mm:.12g}"
+            else:
+                evaluate(text.replace("°", ""), {k: v for k, v in resolve_values(self.doc.constraints).items()
+                                                  if k != c.name})
+            with self.doc.transaction("Edit parameter"):
+                self.doc.set_item("constraint", cid, _r(c, expression=text.replace("°", "")))
+        except (ConstraintError, ExpressionError, ValueError) as exc:
+            QMessageBox.warning(self, "Parameters", str(exc))
+        self.reload()

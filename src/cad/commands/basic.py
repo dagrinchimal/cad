@@ -161,3 +161,7 @@ _ui_command("PAGESETUP", "Page Setup", "Choose the paper size and orientation of
             group="Layout", keywords=("paper size", "sheet size", "orientation"))
 _ui_command("DIMSTYLE", "Dimension Style", "Set dimension text size, arrow size and style, and overall scale.",
             aliases=("D", "DDIM"), group="Annotation", keywords=("dim settings", "arrow size", "dimscale"))
+_ui_command("PARAMETERS", "Parameters", "List and edit the values and formulas of dimensional constraints.",
+            aliases=("PAR", "PARAMETERSMANAGER"), group="Parametric", keywords=("formulas", "variables", "d1"))
+_ui_command("CONSTRAINTBAR", "Show Constraints", "Show or hide the constraint symbols on the drawing.",
+            aliases=("CBAR",), group="Parametric", keywords=("constraint icons",))
