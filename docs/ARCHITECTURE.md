@@ -1,8 +1,8 @@
 # Architecture Plan — Phase 1
 
-Status: **Draft for review**. No application code is written until this is approved.
+Status: **Approved** (Phase 1 complete).
 
-Working name: **Cad** (Python package `cad`). Renaming is cheap until Phase 2 starts.
+App name: **CAD: Calling All Dumbies** (Python package `cad`, executable `CAD.exe`, file extension `.cadz`).
 
 ---
 
@@ -175,13 +175,13 @@ Document
 - **Forward safety**: unknown keys are preserved on save, so an older app version doesn't silently destroy data from a newer one.
 - Full spec: `docs/FILE_FORMAT.md` (written in Phase 2).
 
-**Autosave & crash recovery**: autosave every N minutes (default 5) to `%LOCALAPPDATA%\Cad\autosave\`, written to a temp file then atomically renamed. A lock file marks open sessions; on startup an orphaned lock offers recovery.
+**Autosave & crash recovery**: autosave every N minutes (default 5) to `%LOCALAPPDATA%\CallingAllDumbies\autosave\`, written to a temp file then atomically renamed. A lock file marks open sessions; on startup an orphaned lock offers recovery.
 
 ---
 
 ## 10. Import/export plugin system
 
-Each format is one self-contained module in `cad/plugins/formats/` (built-in) or `%APPDATA%\Cad\plugins\` (user-added). Core code never names a specific format.
+Each format is one self-contained module in `cad/plugins/formats/` (built-in) or `%APPDATA%\CallingAllDumbies\plugins\` (user-added). Core code never names a specific format.
 
 ```python
 class FormatPlugin(Protocol):
@@ -261,7 +261,7 @@ What only your PC can check: speed on real integrated graphics, look and feel at
 ## 13. Build and release
 
 - **CI** (every push): Linux tests, Windows tests, Windows build. Build artifacts (installer + portable zip) downloadable from the run.
-- **Release** (on tag `v*`): attaches `Cad-Setup-x.y.z.exe` and `Cad-Portable-x.y.z.zip` to a GitHub Release.
+- **Release** (on tag `v*`): attaches `CAD-Setup-x.y.z.exe` and `CAD-Portable-x.y.z.zip` to a GitHub Release.
 - **Installer**: Inno Setup, per-user install by default (no admin needed), optional all-users install, `.cadz` file association, Start menu entry.
 - **Portable**: same files zipped; detects a `portable.flag` next to the exe and stores settings/autosave in the folder instead of `%APPDATA%`.
 - **Unsigned**: Windows SmartScreen will show "Windows protected your PC → More info → Run anyway" the first time. Documented in the README.
@@ -298,8 +298,3 @@ What only your PC can check: speed on real integrated graphics, look and feel at
 Each phase ends with a pull request on this repo and a stop for your review.
 
 ---
-
-## 16. Open items for you
-
-1. **App name.** "Cad" is a placeholder. Pick anything before Phase 2 if you want it in the window title, installer and file association.
-2. **File extension.** `.cadz` unless you prefer another.

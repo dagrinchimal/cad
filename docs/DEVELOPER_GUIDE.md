@@ -1,0 +1,78 @@
+# Developer guide
+
+Read [ARCHITECTURE.md](ARCHITECTURE.md) first. This guide covers the code as it stands.
+
+## Layout
+
+```
+src/cad/
+  core/        pure Python + numpy. Never imports Qt (a test enforces it)
+    units/     parser.py (any typed format → mm), formatter.py (mm → display), scales.py
+    geom2d/    vec.py, primitives.py (Seg, Arc), construct.py (bulges, intersections, tangents)
+    model/     entities.py, document.py (tables + transactions), styles.py
+    spatial.py R-tree index: pick, window/crossing selection, snap candidates
+    snaps.py   object snaps, grid, ortho, polar tracking, object snap tracking
+  commands/    framework.py (requests, registry, runner, coordinate input), draw.py, basic.py
+  io/native.py .cadz save/load
+  render/      view.py, scene.py (entities → GPU instance arrays), canvas_gl.py, canvas_painter.py
+  ui/          main_window.py, controller.py (mouse/keys/snaps/overlay), ribbon, command line, dialogs
+```
+
+Dependency direction: `ui → commands → core`, `render → core`, `io → core`.
+
+## Key ideas
+
+**Geometry is immutable.** Entities are frozen dataclasses. To edit, build a changed copy and call
+`doc.replace(new)`. Every mutation must happen inside `with doc.transaction("Name"):` — that is
+one undo step. Listeners (spatial index, renderer, UI) receive a `ChangeSet` saying which handles
+were added, removed or modified.
+
+**Everything is millimetres internally.** Convert only at the edges: `parse_length(text, units)`
+for input, `format_length(mm, units)` for output.
+
+**Commands are generators.** They yield requests and receive answers:
+
+```python
+from cad.commands.framework import GetPoint, GetDistance, command, kw
+from cad.core.model import Circle
+
+@command("RING", label="Ring", aliases=("RI",), group="Draw",
+         description="Draw two concentric circles.")
+def ring_cmd(ctx):
+    center = yield GetPoint("Specify center", rubber=None)
+    r = yield GetDistance("Specify outer radius", base=center,
+                          preview=lambda c: [Circle(center=center, radius=max(1e-9, ((c[0]-center[0])**2 + (c[1]-center[1])**2) ** .5))])
+    ctx.doc.add(Circle(center=center, radius=r), use_current_props=True)
+    ctx.doc.add(Circle(center=center, radius=r * 0.8), use_current_props=True)
+```
+
+- Importing the module registers the command (add it to `commands/__init__.py`).
+- The runner wraps the command in a transaction, so the whole command is one undo step.
+- Keywords: `GetPoint("…", keywords=kw("Close", "Undo"))` returns the string `"Close"` when chosen.
+- `preview` returns temporary entities drawn under the cursor.
+- The ribbon, command-line search, tooltips and (Phase 5) F1 help all read the registry entry.
+- Test it without any UI: see `tests/unit/test_commands.py`.
+
+**Rendering.** `SceneBuilder` caches one float32 block per entity (segments + color + width +
+linetype). Pan and zoom only change shader uniforms. Curves are re-tessellated when the zoom
+changes a lot (auto-regen). The OpenGL canvas expands each segment to a quad in the vertex shader
+and does dash patterns in the fragment shader. The QPainter canvas draws the same arrays for
+machines without OpenGL 3.3. Overlays (cursor, snap markers, tooltips) are painted with QPainter.
+
+## Tests
+
+| Folder | What |
+|---|---|
+| `tests/unit` | units, geometry, model, file format, commands, snaps, architecture rules |
+| `tests/integration` | the real main window driven with mouse clicks and typing |
+| `tests/perf` | 50,000-entity benchmark (`pytest -m perf -s`) |
+
+CI runs all of them on Linux (software and OpenGL renderers) and Windows, builds `CAD.exe`
+with PyInstaller, smoke-tests the built exe and uploads a portable zip plus screenshots.
+
+## Conventions
+
+- New user-facing text: plain English, no jargon without explanation.
+- Every command needs `label` and a one-line `description`.
+- Never block the UI with long work without feedback; never crash on bad input — report it in the
+  command line and keep the prompt.

@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "calling-all-dumbies"
+version = "0.2.0"
+description = "CAD: Calling All Dumbies - a friendly 2D/3D CAD program"
+readme = "README.md"
+license = { text = "GPL-3.0-or-later" }
+requires-python = ">=3.12"
+dependencies = [
+    "PySide6>=6.7",
+    "numpy>=1.26",
+    "moderngl>=5.10",
+    "rtree>=1.2",
+    "rapidfuzz>=3.6",
+    "ezdxf>=1.3",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-qt>=4.4", "pyinstaller>=6.6"]
+
+[project.gui-scripts]
+cad = "cad.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+cad = ["**/*.json", "**/*.glsl"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "perf: performance benchmarks (50k+ entities)",
+    "gui: tests that need a Qt application",
+    "gl: tests that need OpenGL 3.3",
+]
+qt_api = "pyside6"

@@ -1,2 +1,80 @@
-# cad
-Free cad software
+# CAD: Calling All Dumbies
+
+A friendly 2D/3D CAD program for Windows with AutoCAD-style commands, three unit systems
+(millimeters, fractional inches, feet-inches), and a built-in help system.
+
+**Status:** Phase 2 of 7 (core drafting). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full plan.
+
+## What works now (Phase 2)
+
+- **Drawing:** Line, Polyline (with arc segments), Circle (center/radius, diameter, 2-point, 3-point), Arc (3-point, start-center-end, center-start-end), Point
+- **Editing:** Erase, unlimited Undo/Redo, Properties panel (edit coordinates, radius, length… in any unit)
+- **Units:** millimeters, fractional inches (1/2 to 1/64), architectural feet-inches. Type any format anywhere: `25.4mm`, `1 1/2"`, `3'-4 1/2"`, `3' 4.5`
+- **Precise input:** `x,y`, `@dx,dy`, `@distance<angle`, or type a distance to go that far in the cursor direction
+- **Snaps:** endpoint, midpoint, center, intersection, perpendicular, tangent, nearest, quadrant, node, extension, plus grid snap, ortho, polar tracking and object snap tracking, with markers and tooltips
+- **Layers:** color, linetype, lineweight, on/off, freeze, lock
+- **Files:** native `.cadz` format (open, documented, versioned), autosave and crash recovery
+- **Interface:** ribbon with icons and labels, command line that doubles as search (`circ` → Circle), status bar with prompt, coordinates and toggles, context menus, light/dark theme, adjustable UI size
+- **Speed:** GPU rendering; tested with 50,000+ objects
+
+Not yet: trim/offset/fillet and other edit tools, text, dimensions, hatch, blocks (Phase 3); DXF/DWG/PDF and other formats (Phase 4); full help (Phase 5); 3D (Phase 6); installer (Phase 7).
+
+## Keyboard basics
+
+| Key | Does |
+|---|---|
+| Type anything | Goes to the command line (e.g. `L` Enter for Line) |
+| Enter / Space | Finish the current step; repeat the last command when idle |
+| Esc | Cancel the command, or clear the selection |
+| Delete | Erase the selection |
+| Ctrl+Z / Ctrl+Y | Undo / Redo |
+| Mouse wheel | Zoom at the cursor |
+| Middle button drag | Pan (double-click middle = zoom extents) |
+| F3 / F7 / F8 / F9 / F10 / F11 | Object snap / Grid / Ortho / Snap / Polar / Object tracking |
+| Ctrl+1 | Properties panel |
+
+## Run from source
+
+Requires Python 3.12+.
+
+```bash
+pip install -e ".[dev]"
+python -m cad                     # or: cad
+python -m cad --renderer painter  # force the software renderer
+```
+
+## Tests
+
+```bash
+pytest -m "not perf"     # unit + GUI tests (headless, software renderer)
+pytest -m perf -s        # 50,000-entity benchmark with timings
+```
+
+GUI tests on the OpenGL renderer (Linux): `QT_QPA_PLATFORM=xcb CAD_RENDERER=gl xvfb-run pytest tests/integration`.
+
+## Build the Windows program
+
+On Windows with Python 3.12:
+
+```bat
+pip install -e ".[dev]"
+cd packaging
+pyinstaller cad.spec --noconfirm --distpath ..\dist --workpath ..\build
+..\dist\CAD\CAD.exe
+```
+
+Every push also builds it on GitHub Actions (Windows Server). Download **CAD-Portable-windows** from
+the run's *Artifacts* section, unzip, and run `CAD\CAD.exe`. It runs from the folder with no admin rights;
+the included `portable.flag` keeps settings and autosaves in a `data` folder next to it.
+
+Windows SmartScreen will warn the first time because the program isn't code-signed:
+choose **More info → Run anyway**.
+
+## Where things are stored
+
+Settings, autosaves and logs: `%LOCALAPPDATA%\CallingAllDumbies\` (or the `data` folder in portable mode).
+Override with the `CAD_DATA_DIR` environment variable.
+
+## License
+
+GPL-3.0-or-later.

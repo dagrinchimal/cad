@@ -1,0 +1,669 @@
+"""Main window: ties document, commands, canvas, ribbon, command line and panels together."""
+from __future__ import annotations
+
+import logging
+import os
+from dataclasses import replace
+from pathlib import Path
+
+from PySide6.QtCore import QByteArray, QPoint, QSize, Qt, QTimer
+from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
+from PySide6.QtWidgets import (
+    QApplication, QComboBox, QDockWidget, QFileDialog, QLabel, QMainWindow, QMenu, QMessageBox, QToolButton,
+    QVBoxLayout, QWidget,
+)
+
+from .. import APP_NAME, FILE_EXTENSION
+from ..commands import REGISTRY, CommandContext, CommandRunner, GetDistance, GetPoint, GetSelection
+from ..core.model import Document, Layer
+from ..core.spatial import SpatialIndex
+from ..core.units import UnitMode, UnitSettings
+from ..io import native
+from ..render.canvas_base import create_canvas
+from . import theme
+from .autosave import AutosaveSession, find_recoverable, remove_recoverable
+from .command_line import CommandLine
+from .controller import CanvasController
+from .dialogs import DraftingDialog, LayerDialog, OptionsDialog, RecoveryDialog, UnitsDialog
+from .icons import IconProvider
+from .properties import PropertiesPanel
+from .ribbon import Group, Ribbon, Tool
+from .settings import AppSettings, autosave_dir, data_dir, is_portable
+from .widgets import swatch
+
+log = logging.getLogger(__name__)
+FILE_FILTER = f"CAD drawings (*{FILE_EXTENSION});;All files (*)"
+
+TOGGLES = [
+    # key, label, shortcut, tooltip
+    ("grid_on", "GRID", "F7", "Show the background grid"),
+    ("grid_snap_on", "SNAP", "F9", "Snap the cursor to the grid spacing"),
+    ("ortho_on", "ORTHO", "F8", "Only horizontal and vertical lines"),
+    ("polar_on", "POLAR", "F10", "Polar tracking: lock onto angle increments"),
+    ("osnap_on", "OSNAP", "F3", "Object snap: lock onto ends, midpoints, centers…"),
+    ("otrack_on", "OTRACK", "F11", "Object snap tracking: line up with snap points"),
+    ("lwt", "LWT", "", "Show lineweights (line thickness)"),
+]
+
+
+class MainWindow(QMainWindow):
+    def __init__(self, settings: AppSettings | None = None, doc: Document | None = None) -> None:
+        super().__init__()
+        self.settings = settings or AppSettings()
+        self.dark = self.settings.dark_theme
+        self.icons = IconProvider(self.dark)
+        self.snap_cfg = self.settings.snap_settings()
+
+        self.doc = doc or self._blank_document()
+        self.index = SpatialIndex(self.doc)
+        self.ctx = CommandContext(doc=self.doc, index=self.index, view=self, ui=self,
+                                  on_message=self._on_message)
+        self.runner = CommandRunner(self.ctx, REGISTRY)
+
+        # canvas + controller
+        self.canvas = create_canvas()
+        self.controller = CanvasController(self.canvas, self.doc, self.index, self.runner, self.snap_cfg,
+                                           dark=self.dark, show_lineweights=self.settings.show_lineweights)
+        self.controller.coords_changed.connect(self._set_coords)
+        self.controller.selection_changed.connect(self._schedule_properties)
+        self.controller.context_menu_requested.connect(self._context_menu)
+        self.controller.forward_text.connect(self._forward_text)
+
+        # command line
+        self.cmdline = CommandLine(REGISTRY)
+        self.cmdline.submitted.connect(self._on_submit)
+        self.cmdline.run_command.connect(self.run_command)
+        self.cmdline.escape_pressed.connect(self.controller.escape)
+        self.runner.listeners.append(self._on_runner_changed)
+
+        central = QWidget()
+        v = QVBoxLayout(central)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(0)
+        v.addWidget(self.canvas, 1)
+        v.addWidget(self.cmdline)
+        self.setCentralWidget(central)
+
+        self._build_actions()
+        self._build_ribbon()
+        self._build_status_bar()
+        self._build_properties()
+
+        self._props_timer = QTimer(self, singleShot=True, interval=0)
+        self._props_timer.timeout.connect(self.properties.refresh)
+        self.doc.add_listener(self._on_doc_change)
+
+        self.autosave = AutosaveSession(autosave_dir())
+        self._autosave_timer = QTimer(self)
+        self._autosave_timer.timeout.connect(self.autosave_now)
+        self._restart_autosave_timer()
+
+        self.resize(1400, 900)
+        geo = self.settings.get("window/geometry")
+        if isinstance(geo, QByteArray):
+            self.restoreGeometry(geo)
+        self._on_runner_changed()
+        self._refresh_all()
+        self.cmdline.append(f"Welcome to {APP_NAME}. Type a command (try LINE or just 'circ'), "
+                            "or click a tool above. Press F1 for help on any tool.")
+        QTimer.singleShot(0, self.canvas.setFocus)
+
+    # ================================================================ setup
+    def _blank_document(self) -> Document:
+        mode = self.settings.get("drawing/default_units", "mm")
+        try:
+            units = UnitSettings(mode=UnitMode(mode))
+        except ValueError:
+            units = UnitSettings()
+        return Document(units=units)
+
+    def _build_actions(self) -> None:
+        def act(text, shortcut, fn, tip=""):
+            a = QAction(text, self)
+            if shortcut:
+                a.setShortcut(QKeySequence(shortcut))
+                a.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
+            a.triggered.connect(fn)
+            if tip:
+                a.setToolTip(tip)
+            self.addAction(a)
+            return a
+        self.a_new = act("New", "Ctrl+N", lambda: self.run_command("NEW"))
+        self.a_open = act("Open…", "Ctrl+O", lambda: self.run_command("OPEN"))
+        self.a_save = act("Save", "Ctrl+S", lambda: self.run_command("QSAVE"))
+        self.a_saveas = act("Save As…", "Ctrl+Shift+S", lambda: self.run_command("SAVEAS"))
+        self.a_undo = act("Undo", "Ctrl+Z", self.undo)
+        self.a_redo = act("Redo", "Ctrl+Y", self.redo)
+        act("Select all", "Ctrl+A", self.controller.select_all)
+        act("Properties", "Ctrl+1", lambda: self.run_ui_action("PROPERTIES"))
+        act("Help", "F1", self.show_help)
+        for key, _label, sc, _tip in TOGGLES:
+            if sc:
+                act(key, sc, lambda _=False, k=key: self.toggle(k))
+
+    def _build_ribbon(self) -> None:
+        app_menu = QMenu(self)
+        for name in ("NEW", "OPEN", "QSAVE", "SAVEAS"):
+            c = REGISTRY.get(name)
+            a = app_menu.addAction(self.icons.icon(c.icon), f"{c.label}\t{c.shortcut}")
+            a.triggered.connect(lambda _=False, n=name: self.run_command(n))
+        self.recent_menu = app_menu.addMenu("Open recent")
+        app_menu.addSeparator()
+        a = app_menu.addAction(self.icons.icon("recover"), "Recover autosaved drawings…")
+        a.triggered.connect(lambda: self.run_command("RECOVER"))
+        a = app_menu.addAction(self.icons.icon("options"), "Options…")
+        a.triggered.connect(lambda: self.run_command("OPTIONS"))
+        app_menu.addSeparator()
+        a = app_menu.addAction(self.icons.icon("exit"), "Exit")
+        a.triggered.connect(self.close)
+        app_menu.aboutToShow.connect(self._fill_recent)
+
+        home = [
+            Group("Draw", [
+                Tool("LINE"), Tool("PLINE"),
+                Tool("CIRCLE", variants=[Tool("CIRCLE", "Center, Radius", "circle"),
+                                         Tool("CIRCLE", "2-Point", "circle_2p", then="2P"),
+                                         Tool("CIRCLE", "3-Point", "circle_3p", then="3P")]),
+                Tool("ARC", variants=[Tool("ARC", "3-Point", "arc"),
+                                      Tool("ARC", "Center, Start, End", "arc_center", then="C")]),
+                Tool("POINT", large=False),
+            ]),
+            Group("Modify", [Tool("ERASE"), Tool("UNDO", large=False), Tool("REDO", large=False)]),
+            Group("Layers", ["layer_combo", Tool("LAYER", label="Layer\nProperties")]),
+            Group("Utilities", [Tool("DIST", label="Measure", large=False), Tool("ID", label="Locate Point", large=False),
+                                Tool("UNITS"), Tool("DSETTINGS", label="Drafting\nSettings")]),
+        ]
+        view = [
+            Group("Navigate", [Tool("ZOOMEXTENTS", label="Zoom\nExtents", icon="zoomextents"),
+                               Tool("ZOOMWINDOW", label="Zoom\nWindow", icon="zoomwindow"),
+                               Tool("ZOOM", label="Previous", icon="zoomprevious", then="P", large=False),
+                               Tool("ZOOM", label="Zoom In", icon="zoomin", then="I", large=False),
+                               Tool("ZOOM", label="Zoom Out", icon="zoomout", then="O", large=False),
+                               Tool("PAN"), Tool("REGEN")]),
+            Group("Show", [Tool("PROPERTIES"), Tool("OPTIONS")]),
+        ]
+        self.layer_combo = QComboBox()
+        self.layer_combo.setMinimumWidth(170)
+        self.layer_combo.setToolTip("<b>Current layer</b><br>New objects go on this layer.")
+        self.layer_combo.activated.connect(self._layer_combo_chosen)
+
+        def layer_widget():
+            w = QWidget()
+            lay = QVBoxLayout(w)
+            lay.setContentsMargins(2, 6, 2, 2)
+            lay.addWidget(QLabel("Current layer"))
+            lay.addWidget(self.layer_combo)
+            return w
+        self.ribbon = Ribbon(REGISTRY, self.icons, [("Home", home), ("View", view)], app_menu,
+                             special={"layer_combo": layer_widget})
+        self.ribbon.tool_triggered.connect(self._ribbon_tool)
+        self.setMenuWidget(self.ribbon)
+
+    def _build_status_bar(self) -> None:
+        sb = self.statusBar()
+        self.prompt_label = QLabel()
+        self.prompt_label.setObjectName("PromptLabel")
+        self.coord_label = QLabel(objectName="CoordLabel")
+        self.units_combo = QComboBox()
+        for m in UnitMode:
+            self.units_combo.addItem(m.label, m.value)
+        self.units_combo.setToolTip("<b>Units</b><br>How lengths are shown. You can type any unit at any time.")
+        self.units_combo.activated.connect(self._units_combo_chosen)
+        sb.addWidget(self.prompt_label, 1)
+        sb.addPermanentWidget(self.coord_label)
+        sb.addPermanentWidget(self.units_combo)
+        self.toggle_buttons: dict[str, QToolButton] = {}
+        for key, label, sc, tip in TOGGLES:
+            b = QToolButton(text=label)
+            b.setCheckable(True)
+            b.setToolTip(f"<b>{label}</b>{f' ({sc})' if sc else ''}<br>{tip}")
+            b.clicked.connect(lambda _=False, k=key: self.toggle(k))
+            sb.addPermanentWidget(b)
+            self.toggle_buttons[key] = b
+        self.renderer_label = QLabel(f"<span style='color:gray'>{self.canvas.backend_name}</span>")
+        sb.addPermanentWidget(self.renderer_label)
+        self._sync_toggles()
+
+    def _build_properties(self) -> None:
+        self.properties = PropertiesPanel(lambda: self.doc, lambda: self.ctx.selection, dark=self.dark)
+        self.props_dock = QDockWidget("Properties", self)
+        self.props_dock.setObjectName("PropertiesDock")
+        self.props_dock.setWidget(self.properties)
+        self.props_dock.setMinimumWidth(260)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.props_dock)
+
+    # ================================================================ commands & input
+    def run_command(self, name: str, then: str | None = None) -> None:
+        self.cmdline.hide_popup()
+        self.runner.run(name)
+        if then and self.runner.is_active:
+            self.runner.submit_text(then)
+        self.controller._after_input()
+        self.canvas.setFocus()
+
+    def _ribbon_tool(self, name: str, then) -> None:
+        self.run_command(name, then)
+
+    def _on_submit(self, text: str) -> None:
+        if self.runner.is_active:
+            self.cmdline.append(f"{self.runner.prompt} {text.strip()}")
+        if not text.strip() and isinstance(self.runner.request, GetSelection):
+            self.controller.enter()
+        else:
+            self.runner.submit_text(text)
+            self.controller._after_input()
+        if self.runner.is_active:
+            self.canvas.setFocus()
+
+    def _forward_text(self, text: str) -> None:
+        self.cmdline.type_text(text)
+
+    def _on_message(self, text: str) -> None:
+        self.cmdline.append(text)
+
+    def _on_runner_changed(self) -> None:
+        prompt = self.runner.prompt
+        self.cmdline.set_prompt(prompt if self.runner.is_active else "Command:", not self.runner.is_active)
+        self.prompt_label.setText(prompt if self.runner.is_active else
+                                  "Ready — type a command or pick a tool")
+        self._update_undo_actions()
+
+    def undo(self) -> None:
+        if self.runner.is_active:
+            self.runner.cancel()
+        self.runner.run("UNDO")
+
+    def redo(self) -> None:
+        if self.runner.is_active:
+            self.runner.cancel()
+        self.runner.run("REDO")
+
+    # ================================================================ ViewApi for commands
+    def zoom_extents(self) -> None:
+        self.controller.zoom_extents()
+
+    def zoom_window(self, p1, p2) -> None:
+        self.controller.zoom_window(p1, p2)
+
+    def zoom_previous(self) -> bool:
+        return self.controller.zoom_previous()
+
+    def zoom_factor(self, factor: float) -> None:
+        self.controller.zoom_factor(factor)
+
+    def regen(self) -> None:
+        self.controller.regen()
+
+    # ================================================================ UiApi for commands
+    def run_ui_action(self, name: str) -> None:
+        # Dialogs must open after the command finishes (outside its generator)
+        QTimer.singleShot(0, lambda: self._ui_action(name))
+
+    def _ui_action(self, name: str) -> None:
+        handlers = {
+            "NEW": self.new_drawing, "OPEN": self.open_dialog, "QSAVE": self.save, "SAVEAS": self.save_as,
+            "RECOVER": lambda: self.offer_recovery(force=True), "EXIT": self.close,
+            "LAYER": self.layer_dialog, "UNITS": self.units_dialog, "DSETTINGS": self.drafting_dialog,
+            "OPTIONS": self.options_dialog,
+            "PROPERTIES": lambda: self.props_dock.setVisible(not self.props_dock.isVisible()),
+        }
+        fn = handlers.get(name)
+        if fn:
+            fn()
+
+    # ================================================================ documents
+    def set_document(self, doc: Document) -> None:
+        if self.runner.is_active:
+            self.runner.cancel()
+        self.doc.remove_listener(self._on_doc_change)
+        self.index.detach()
+        self.doc = doc
+        self.index = SpatialIndex(doc)
+        self.ctx.doc = doc
+        self.ctx.index = self.index
+        self.ctx.selection.clear()
+        self.ctx.last_point = None
+        self.controller.set_document(doc, self.index)
+        doc.add_listener(self._on_doc_change)
+        self.autosave.discard_copy()
+        self._refresh_all()
+
+    def maybe_save(self) -> bool:
+        """Ask to save changes. Returns False if the user cancelled."""
+        if not self.doc.is_modified:
+            return True
+        r = QMessageBox.question(
+            self, "Save changes?", f"Save changes to {self.title()}?",
+            QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel)
+        if r == QMessageBox.StandardButton.Save:
+            return self.save()
+        return r == QMessageBox.StandardButton.Discard
+
+    def new_drawing(self) -> None:
+        if self.maybe_save():
+            self.set_document(self._blank_document())
+
+    def open_dialog(self) -> None:
+        if not self.maybe_save():
+            return
+        start = os.path.dirname(self.doc.path) if self.doc.path else str(Path.home())
+        path, _ = QFileDialog.getOpenFileName(self, "Open drawing", start, FILE_FILTER)
+        if path:
+            self.open_path(path)
+
+    def open_path(self, path: str) -> bool:
+        try:
+            doc, warnings = native.load(path)
+        except Exception as exc:            # noqa: BLE001
+            QMessageBox.critical(self, "Can't open drawing", f"{path}\n\n{exc}")
+            return False
+        self.set_document(doc)
+        for w in warnings:
+            self.cmdline.append(f"Note: {w}")
+        self.settings.add_recent(path)
+        self.cmdline.append(f"Opened {path}")
+        return True
+
+    def save(self) -> bool:
+        if not self.doc.path:
+            return self.save_as()
+        return self._save_to(self.doc.path)
+
+    def save_as(self) -> bool:
+        start = self.doc.path or str(Path.home() / f"Drawing1{FILE_EXTENSION}")
+        path, _ = QFileDialog.getSaveFileName(self, "Save drawing as", start, FILE_FILTER)
+        if not path:
+            return False
+        if not path.lower().endswith(FILE_EXTENSION):
+            path += FILE_EXTENSION
+        return self._save_to(path)
+
+    def _save_to(self, path: str) -> bool:
+        try:
+            native.save(self.doc, path, thumbnail_png=self._thumbnail())
+        except Exception as exc:            # noqa: BLE001
+            QMessageBox.critical(self, "Save failed", f"Couldn't save to {path}\n\n{exc}")
+            return False
+        self.doc.path = path
+        self.doc.mark_saved()
+        self.autosave.discard_copy()
+        self.settings.add_recent(path)
+        self.cmdline.append(f"Saved {path}")
+        self._update_title()
+        return True
+
+    def _thumbnail(self) -> bytes | None:
+        try:
+            from PySide6.QtCore import QBuffer, QIODevice
+            img = self.canvas.grab_image().scaled(QSize(256, 256), Qt.AspectRatioMode.KeepAspectRatio,
+                                                  Qt.TransformationMode.SmoothTransformation)
+            buf = QBuffer()
+            buf.open(QIODevice.OpenModeFlag.WriteOnly)
+            img.save(buf, "PNG")
+            return bytes(buf.data())
+        except Exception:                   # noqa: BLE001
+            return None
+
+    def _fill_recent(self) -> None:
+        self.recent_menu.clear()
+        files = self.settings.recent_files
+        if not files:
+            self.recent_menu.addAction("(none yet)").setEnabled(False)
+        for f in files:
+            a = self.recent_menu.addAction(f)
+            a.triggered.connect(lambda _=False, p=f: self.maybe_save() and self.open_path(p))
+
+    # ================================================================ autosave / recovery
+    def _restart_autosave_timer(self) -> None:
+        mins = self.settings.autosave_minutes
+        if mins > 0:
+            self._autosave_timer.start(mins * 60_000)
+        else:
+            self._autosave_timer.stop()
+
+    def autosave_now(self) -> bool:
+        ok = self.autosave.save(self.doc, self.title())
+        if ok:
+            self.statusBar().showMessage("Autosaved", 2500)
+        return ok
+
+    def offer_recovery(self, force: bool = False) -> None:
+        items = find_recoverable(autosave_dir())
+        if not items:
+            if force:
+                QMessageBox.information(self, "Recover", "There are no autosaved drawings to recover.")
+            return
+        dlg = RecoveryDialog(items, self)
+        if dlg.exec() != RecoveryDialog.DialogCode.Accepted:
+            return
+        if dlg.discard:
+            for it in items:
+                remove_recoverable(it)
+            return
+        chosen = dlg.chosen()
+        if not chosen:
+            return
+        it = chosen[0]
+        if not self.maybe_save():
+            return
+        try:
+            doc, _ = native.load(it["file"])
+        except Exception as exc:          # noqa: BLE001
+            QMessageBox.critical(self, "Recover", f"Couldn't read the autosave: {exc}")
+            return
+        doc.path = it.get("original_path")
+        doc.saved_revision = -1             # recovered work counts as unsaved
+        self.set_document(doc)
+        remove_recoverable(it)
+        self.cmdline.append(f"Recovered '{it['title']}'. Save it to keep it.")
+        if len(chosen) > 1:
+            self.cmdline.append(f"{len(chosen) - 1} more recovered drawing(s) are waiting: use File > Recover.")
+
+    # ================================================================ dialogs
+    def layer_dialog(self) -> None:
+        LayerDialog(self.doc, self.dark, self).exec()
+
+    def units_dialog(self) -> None:
+        dlg = UnitsDialog(self.doc.header.units, self)
+        if dlg.exec():
+            self._set_units(dlg.result_units())
+
+    def _set_units(self, units: UnitSettings) -> None:
+        if units == self.doc.header.units:
+            return
+        if self.runner.is_active:
+            self.runner.cancel()
+        with self.doc.transaction("Units"):
+            self.doc.set_header(replace(self.doc.header, units=units))
+        self.cmdline.append(f"Units: {units.mode.label}")
+
+    def drafting_dialog(self) -> None:
+        dlg = DraftingDialog(self.snap_cfg, self.doc, self)
+        if dlg.exec():
+            cfg, grid, snap = dlg.result(self.snap_cfg)
+            self._apply_snap_cfg(cfg)
+            if (grid, snap) != (self.doc.header.grid_spacing, self.doc.header.snap_spacing):
+                with self.doc.transaction("Grid settings"):
+                    self.doc.set_header(replace(self.doc.header, grid_spacing=grid, snap_spacing=snap))
+
+    def options_dialog(self) -> None:
+        dlg = OptionsDialog(self.settings, self.canvas.gl_info, str(data_dir()), is_portable(), self)
+        if dlg.exec():
+            ch = dlg.apply()
+            self.set_theme(ch["dark"])
+            self._restart_autosave_timer()
+            if ch["restart"]:
+                QMessageBox.information(self, "Options", "Some changes take effect after you restart the program.")
+
+    def set_theme(self, dark: bool) -> None:
+        self.dark = dark
+        theme.apply_theme(QApplication.instance(), dark, self.settings.font_scale)
+        self.icons.set_dark(dark)
+        self.ribbon.refresh_icons()
+        self.controller.set_theme(dark)
+        self.properties.set_dark(dark)
+        self._refresh_layer_combo()
+
+    # ================================================================ toggles
+    def toggle(self, key: str) -> None:
+        if key == "lwt":
+            self.settings.show_lineweights = not self.settings.show_lineweights
+            self.controller.set_show_lineweights(self.settings.show_lineweights)
+        else:
+            cfg = self.snap_cfg
+            new_val = not getattr(cfg, key)
+            setattr(cfg, key, new_val)
+            if key == "ortho_on" and new_val:
+                cfg.polar_on = False            # ortho and polar are mutually exclusive (as in AutoCAD)
+            if key == "polar_on" and new_val:
+                cfg.ortho_on = False
+            self._apply_snap_cfg(cfg)
+            label = next(t[1] for t in TOGGLES if t[0] == key)
+            self.cmdline.append(f"<{label} {'on' if new_val else 'off'}>")
+        self._sync_toggles()
+
+    def _apply_snap_cfg(self, cfg) -> None:
+        self.snap_cfg = cfg
+        self.controller.cfg = cfg
+        self.settings.save_snap_settings(cfg)
+        self.controller.update_grid()
+        self._sync_toggles()
+
+    def _sync_toggles(self) -> None:
+        for key, b in self.toggle_buttons.items():
+            b.setChecked(self.settings.show_lineweights if key == "lwt" else bool(getattr(self.snap_cfg, key)))
+
+    # ================================================================ refresh
+    def _on_doc_change(self, doc, cs) -> None:
+        if cs.layers or cs.header or cs.reset:
+            self._refresh_layer_combo()
+            self._sync_units_combo()
+        self._update_title()
+        self._update_undo_actions()
+        self._schedule_properties()
+
+    def _schedule_properties(self) -> None:
+        self._props_timer.start()
+
+    def _refresh_all(self) -> None:
+        self._refresh_layer_combo()
+        self._sync_units_combo()
+        self._update_title()
+        self._update_undo_actions()
+        self._schedule_properties()
+
+    def _refresh_layer_combo(self) -> None:
+        cb = self.layer_combo
+        cb.blockSignals(True)
+        cb.clear()
+        for name, layer in self.doc.layers.items():
+            flags = []
+            if not layer.on:
+                flags.append("off")
+            if layer.frozen:
+                flags.append("frozen")
+            if layer.locked:
+                flags.append("locked")
+            label = name + (f"  ({', '.join(flags)})" if flags else "")
+            cb.addItem(swatch(layer.color, self.dark), label, name)
+        cb.setCurrentIndex(cb.findData(self.doc.header.current_layer))
+        cb.blockSignals(False)
+
+    def _layer_combo_chosen(self, idx: int) -> None:
+        name = self.layer_combo.itemData(idx)
+        if name and name != self.doc.header.current_layer and not self.doc.in_transaction:
+            try:
+                with self.doc.transaction("Current layer"):
+                    self.doc.set_current_layer(name)
+            except Exception as exc:        # noqa: BLE001
+                QMessageBox.warning(self, "Layer", str(exc))
+                self._refresh_layer_combo()
+        self.canvas.setFocus()
+
+    def _sync_units_combo(self) -> None:
+        self.units_combo.blockSignals(True)
+        self.units_combo.setCurrentIndex(self.units_combo.findData(self.doc.header.units.mode.value))
+        self.units_combo.blockSignals(False)
+
+    def _units_combo_chosen(self, idx: int) -> None:
+        mode = UnitMode(self.units_combo.itemData(idx))
+        self._set_units(self.doc.header.units.with_mode(mode))
+        self.canvas.setFocus()
+
+    def title(self) -> str:
+        return os.path.basename(self.doc.path) if self.doc.path else "Drawing1"
+
+    def _update_title(self) -> None:
+        self.setWindowTitle(f"{self.title()}{' *' if self.doc.is_modified else ''} — {APP_NAME}")
+
+    def _update_undo_actions(self) -> None:
+        self.a_undo.setEnabled(bool(self.doc.undo_name))
+        self.a_redo.setEnabled(bool(self.doc.redo_name))
+
+    def _set_coords(self, text: str) -> None:
+        self.coord_label.setText(text)
+
+    # ================================================================ context menu
+    def _context_menu(self, pos: QPoint) -> None:
+        self.build_context_menu().exec(pos)
+
+    def build_context_menu(self) -> QMenu:
+        """Menu offering only what fits the current state: command options, the selection, or the view."""
+        m = QMenu(self)
+        req = self.runner.request
+        if self.runner.is_active:
+            m.addAction("Enter").triggered.connect(self.controller.enter)
+            m.addAction("Cancel").triggered.connect(self.controller.escape)
+            if req is not None and req.keywords:
+                m.addSeparator()
+                for k in req.keywords:
+                    m.addAction(k.name).triggered.connect(lambda _=False, n=k.name: (self.runner.submit_keyword(n),
+                                                                                    self.controller._after_input()))
+            if isinstance(req, (GetPoint, GetDistance)):
+                m.addSeparator()
+                snaps = m.addMenu("Snap settings")
+                snaps.addAction("Drafting settings…").triggered.connect(self.drafting_dialog)
+        elif self.ctx.selection:
+            n = len(self.ctx.selection)
+            m.addAction(self.icons.icon("erase"), f"Erase {n} object(s)").triggered.connect(lambda: self.run_command("ERASE"))
+            m.addAction(self.icons.icon("properties"), "Properties").triggered.connect(lambda: self.props_dock.show())
+            m.addSeparator()
+            m.addAction("Deselect all").triggered.connect(self.controller.clear_selection)
+        else:
+            last = self.runner.last_command
+            if last is not None:
+                m.addAction(f"Repeat {last.label}").triggered.connect(lambda: self.run_command(last.name))
+            if self.doc.undo_name:
+                m.addAction(self.icons.icon("undo"), f"Undo {self.doc.undo_name}").triggered.connect(self.undo)
+            if self.doc.redo_name:
+                m.addAction(self.icons.icon("redo"), f"Redo {self.doc.redo_name}").triggered.connect(self.redo)
+            m.addSeparator()
+            m.addAction(self.icons.icon("zoomextents"), "Zoom extents").triggered.connect(self.controller.zoom_extents)
+            m.addAction(self.icons.icon("pan"), "Pan").triggered.connect(lambda: self.run_command("PAN"))
+            m.addAction("Select all").triggered.connect(self.controller.select_all)
+        return m
+
+    # ================================================================ help (full help system arrives in Phase 5)
+    def show_help(self) -> None:
+        c = self.runner.active
+        if c is None:
+            QMessageBox.information(self, "Help", "Type part of a command name in the command line to find tools. "
+                                    "The full searchable help arrives in a later update.")
+            return
+        QMessageBox.information(self, f"Help: {c.label}", f"<b>{c.label}</b> ({c.name})<br><br>{c.description}"
+                                f"<br><br>Current step: {self.runner.prompt}")
+
+    # ================================================================ close
+    def closeEvent(self, ev: QCloseEvent) -> None:     # noqa: N802
+        if self.runner.is_active:
+            self.runner.cancel()
+        if not self.maybe_save():
+            ev.ignore()
+            return
+        self.settings.set("window/geometry", self.saveGeometry())
+        self.settings.sync()
+        self.autosave.close()
+        ev.accept()
+
+
+_ = Layer
