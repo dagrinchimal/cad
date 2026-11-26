@@ -103,7 +103,6 @@ class CanvasController(QObject):
         self.view_history: list[ViewState] = []
         self._last_history_push = 0.0
         self._acquire_target: tuple[Vec, Osnap] | None = None
-        self.value_boxes: list[tuple[QRectF, EditableValue]] = []   # clickable numbers (Revit-style)
         self.hot_grip: Vec | None = None
         self.value_editor: QLineEdit | None = None
         self._editing_value: EditableValue | None = None
@@ -828,7 +827,6 @@ class CanvasController(QObject):
                     break
 
     def _paint_grips(self, p: QPainter) -> None:
-        self.value_boxes = []
         sel = self.runner.ctx.selection
         if not sel or self.runner.is_active:
             return
@@ -875,27 +873,34 @@ class CanvasController(QObject):
     def _value_text_color(self) -> QColor:
         return QColor(120, 190, 255) if self.dark else QColor(0, 90, 200)
 
-    def _paint_values(self, p: QPainter, e) -> None:
+    def value_layout(self) -> list[tuple[QRectF, EditableValue, str, list, bool]]:
+        """Clickable numbers for the single selected object: (screen rect, target, text, lines, dashed).
+        Computed from the view, independent of painting, so clicks work whatever the renderer."""
+        sel = self.runner.ctx.selection
+        if len(sel) != 1 or self.runner.is_active:
+            return []
+        e = self.doc.entities.get(next(iter(sel)))
+        if e is None or e.space != self.space:
+            return []
         v = self.view
         try:
             targets = editable_values(self.doc, e)
-        except Exception:     # never let an overlay break painting
-            return
+        except Exception:     # never let an overlay break the canvas
+            return []
         if len(targets) > 40:
             targets = [t for t in targets if t.kind == "dim"] + [t for t in targets if t.kind != "dim"][:40]
-        f = QFont(p.font())
-        p.setFont(f)
-        fm = QFontMetrics(f)
-        col = self._value_text_color()
-        bg = QColor(30, 34, 40, 225) if self.dark else QColor(255, 255, 255, 230)
+        fm = QFontMetrics(self.canvas.font())
+        out = []
         for t in targets:
             text = format_value(self.doc, t)
+            lines: list = []
+            dashed = False
             if t.kind == "dim":
                 cx, cy = v.to_screen(t.label_at)
             elif t.kind == "radius":
                 a, b = v.to_screen(t.a), v.to_screen(t.b)
-                p.setPen(QPen(col, 1, Qt.PenStyle.DashLine))
-                p.drawLine(QPointF(*a), QPointF(*b))
+                lines = [(a, b)]
+                dashed = True
                 cx, cy = (a[0] + b[0]) / 2, (a[1] + b[1]) / 2
                 text = "R " + text
             else:
@@ -906,21 +911,30 @@ class CanvasController(QObject):
                     continue                      # too small on screen to label
                 nx, ny = -dy / L * VALUE_OFFSET_PX, dx / L * VALUE_OFFSET_PX
                 a2, b2 = (a[0] + nx, a[1] + ny), (b[0] + nx, b[1] + ny)
-                p.setPen(QPen(col, 1))
-                p.drawLine(QPointF(*a), QPointF(*a2))
-                p.drawLine(QPointF(*b), QPointF(*b2))
-                p.drawLine(QPointF(*a2), QPointF(*b2))
-                for q in (a2, b2):                # small slash ticks, like architectural dimensions
-                    p.drawLine(QPointF(q[0] - 4, q[1] + 4), QPointF(q[0] + 4, q[1] - 4))
+                lines = [(a, a2), (b, b2), (a2, b2)]
+                lines += [((q[0] - 4, q[1] + 4), (q[0] + 4, q[1] - 4)) for q in (a2, b2)]   # slash ticks
                 cx, cy = (a2[0] + b2[0]) / 2, (a2[1] + b2[1]) / 2
             w, h = fm.horizontalAdvance(text) + 10, fm.height() + 4
-            rect = QRectF(cx - w / 2, cy - h / 2, w, h)
+            out.append((QRectF(cx - w / 2, cy - h / 2, w, h), t, text, lines, dashed))
+        return out
+
+    def _paint_values(self, p: QPainter, e) -> None:
+        p.setFont(self.canvas.font())
+        col = self._value_text_color()
+        bg = QColor(30, 34, 40, 225) if self.dark else QColor(255, 255, 255, 230)
+        for rect, t, text, lines, dashed in self.value_layout():
+            p.setPen(QPen(col, 1, Qt.PenStyle.DashLine if dashed else Qt.PenStyle.SolidLine))
+            for a, b in lines:
+                p.drawLine(QPointF(*a), QPointF(*b))
             p.setPen(QPen(col, 1))
             p.setBrush(bg)
             p.drawRoundedRect(rect, 3, 3)
             p.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
             p.setBrush(Qt.BrushStyle.NoBrush)
-            self.value_boxes.append((rect, t))
+
+    @property
+    def value_boxes(self) -> list[tuple[QRectF, EditableValue]]:
+        return [(r, t) for r, t, *_ in self.value_layout()]
 
     def begin_value_edit(self, target: EditableValue, rect: QRectF) -> None:
         self.cancel_value_edit()
