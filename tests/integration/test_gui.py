@@ -396,10 +396,13 @@ def test_fence_trim_with_mouse_and_shift_extend(qtbot, win):
     win.run_command("TRIM")
     click(qtbot, win, (50, 25))           # empty space starts a fence
     assert "fence" in win.runner.request.prompt, win.runner.ctx.messages[-5:]
+    c = win.controller
+    dbg = [("p1", c.runner.request.base, "screen", screen(win, (50, -5)), "cfg", c.cfg)]
     click(qtbot, win, (50, -5))
+    dbg.append(("cursor", c.cursor_screen, c.cursor_model, "snap", c.snap and (c.snap.kind, c.snap.point, c.snap.osnap)))
     qtbot.keyClick(win.canvas, Qt.Key.Key_Return)
     horiz = [e for e in win.doc.entities.values() if isinstance(e, Line) and e.p1[1] == e.p2[1] and e.p1[1] <= 20]
-    assert len(horiz) == 6, (win.runner.ctx.messages[-6:], win.runner.ctx.last_point, win.controller.view.pixel)
+    assert len(horiz) == 6, (win.runner.ctx.messages[-6:], win.runner.ctx.last_point, dbg)
     v = Line(p1=(10, 30), p2=(10, 45))
     with win.doc.transaction("v"):
         v = win.doc.add(v)
