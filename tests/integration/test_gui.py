@@ -407,3 +407,14 @@ def test_fence_trim_with_mouse_and_shift_extend(qtbot, win):
     click(qtbot, win, (10, 44), Qt.KeyboardModifier.ShiftModifier)      # Shift: extend instead
     qtbot.keyClick(win.canvas, Qt.Key.Key_Return)
     assert win.doc.get(v.handle).p2 == pytest.approx((10, 50))
+
+
+def test_fast_second_click_in_a_command_counts(qtbot, win):
+    win.controller.zoom_extents()
+    win.run_command("LINE")
+    click(qtbot, win, (0, 0))
+    pos = screen(win, (40, 0))
+    QTest.mouseMove(win.canvas, pos)
+    qtbot.mouseDClick(win.canvas, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, pos)
+    qtbot.keyClick(win.canvas, Qt.Key.Key_Escape)
+    assert any(isinstance(e, Line) for e in win.doc.entities.values())

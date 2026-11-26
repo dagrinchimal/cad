@@ -580,6 +580,11 @@ class CanvasController(QObject):
             self._finish_window(ev.position(), ev.modifiers())
 
     def on_double_click(self, ev) -> None:
+        if ev.button() == Qt.MouseButton.LeftButton and self.runner.is_active:
+            # Qt turns the second of two quick clicks into a double-click; during a command it is
+            # just another click (e.g. two fast points of a fence or polyline).
+            self.on_mouse_press(ev)
+            return
         if ev.button() == Qt.MouseButton.MiddleButton:
             self.zoom_extents()
         elif ev.button() == Qt.MouseButton.LeftButton and not self.runner.is_active:
