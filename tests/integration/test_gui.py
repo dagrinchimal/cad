@@ -14,7 +14,9 @@ pytestmark = pytest.mark.gui
 
 
 @pytest.fixture
-def win(qtbot):
+def win(qtbot, tmp_path, monkeypatch):
+    # every test starts from default settings (no window size, Ortho, etc. left by an earlier test)
+    monkeypatch.setenv("CAD_DATA_DIR", str(tmp_path / "data"))
     w = MainWindow(AppSettings())     # not qtbot.addWidget: we close it ourselves after marking saved
     w.resize(1200, 800)
     w.show()
