@@ -58,11 +58,12 @@ def run_converter(exe: str, src: str, out_dir: str, version: str, out_type: str)
         kwargs: dict = {}
         if sys.platform == "win32":
             kwargs["creationflags"] = 0x08000000          # CREATE_NO_WINDOW
-        elif not env.get("DISPLAY") and not env.get("WAYLAND_DISPLAY"):
-            if shutil.which("xvfb-run"):
+        else:
+            # The converter ships only Qt's xcb plugin: don't pass on our own QT_QPA_PLATFORM
+            # (e.g. "offscreen"), and give it a virtual screen when there is no display.
+            env.pop("QT_QPA_PLATFORM", None)
+            if not env.get("DISPLAY") and shutil.which("xvfb-run"):
                 cmd = ["xvfb-run", "-a"] + cmd
-            else:
-                env["QT_QPA_PLATFORM"] = "offscreen"
         try:
             proc = subprocess.run(cmd, env=env, capture_output=True, timeout=TIMEOUT_S, **kwargs)
         except subprocess.TimeoutExpired as exc:
