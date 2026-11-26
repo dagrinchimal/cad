@@ -21,6 +21,18 @@ def _dim(ctx: CommandContext, **kw_) -> Dimension:
     return Dimension(style=ctx.doc.header.current_dimstyle, layer=ctx.doc.header.current_layer, **kw_)
 
 
+def _ref(ctx: CommandContext, pt) -> tuple[int, str]:
+    """Attach a picked point to the object point it snapped to, so the dimension follows it."""
+    from ..core.points import find_point_ref
+    tol = max(ctx.view.pick_tolerance() * 1e-3, 1e-7)
+    return find_point_ref(ctx.doc, pt, tol, ctx.space) or (0, "")
+
+
+def _refs(ctx: CommandContext, *pts) -> tuple[tuple[int, str], ...]:
+    refs = tuple(_ref(ctx, p) for p in pts)
+    return refs if any(h for h, _ in refs) else ()
+
+
 def _auto_angle(p1, p2, loc) -> float:
     lo_y, hi_y = sorted((p1[1], p2[1]))
     lo_x, hi_x = sorted((p1[0], p2[0]))
@@ -37,14 +49,21 @@ def _two_points_or_object(ctx: CommandContext):
                        rubber=None)
     if r is None:
         e, pick = yield GetEntity("Select object to dimension")
+        if isinstance(e, Line):
+            return e.p1, e.p2, ((e.handle, "p1"), (e.handle, "p2"))
+        if isinstance(e, Polyline):
+            prims = e.primitives()
+            i = min(range(len(prims)), key=lambda k: prims[k].distance_to(pick))
+            j = (i + 1) % len(e.vertices)
+            return prims[i].start, prims[i].end, ((e.handle, f"v{i}"), (e.handle, f"v{j}"))
         g = ctx.doc.geometry(e)
         prims = g.prims(snappable_only=True)
         if not prims:
             return None
         prim = min(prims, key=lambda p: p.distance_to(pick))
-        return prim.start, prim.end
+        return prim.start, prim.end, ()
     p2 = yield GetPoint("Specify second extension line origin", base=r)
-    return r, p2
+    return r, p2, _refs(ctx, r, p2)
 
 
 @command("DIMLINEAR", label="Linear Dimension", aliases=("DLI", "DIMLIN"), group="Annotation",
@@ -53,7 +72,7 @@ def dimlinear_cmd(ctx: CommandContext):
     pts = yield from _two_points_or_object(ctx)
     if not pts:
         return
-    p1, p2 = pts
+    p1, p2, refs = pts
     text, lock = "", None
     while True:
         def prev(c):
@@ -72,8 +91,8 @@ def dimlinear_cmd(ctx: CommandContext):
             continue
         break
     ang = lock if lock is not None else _auto_angle(p1, p2, r)
-    d = ctx.doc.add(_dim(ctx, dimtype="linear", p1=p1, p2=p2, location=r, angle=ang, text="" if text == "<>" else text),
-                    use_current_props=False)
+    d = ctx.doc.add(_dim(ctx, dimtype="linear", p1=p1, p2=p2, location=r, angle=ang, text="" if text == "<>" else text,
+                         refs=refs), use_current_props=False)
     ctx.echo(f"Dimension text = {ctx.fmt(d.measurement())}")
 
 
@@ -84,10 +103,10 @@ def dimaligned_cmd(ctx: CommandContext):
     pts = yield from _two_points_or_object(ctx)
     if not pts:
         return
-    p1, p2 = pts
+    p1, p2, refs = pts
     r = yield GetPoint("Specify dimension line location", rubber=None,
                        preview=lambda c: [_dim(ctx, dimtype="aligned", p1=p1, p2=p2, location=c)])
-    d = ctx.doc.add(_dim(ctx, dimtype="aligned", p1=p1, p2=p2, location=r))
+    d = ctx.doc.add(_dim(ctx, dimtype="aligned", p1=p1, p2=p2, location=r, refs=refs))
     ctx.echo(f"Dimension text = {ctx.fmt(d.measurement())}")
 
 
@@ -95,6 +114,7 @@ def dimaligned_cmd(ctx: CommandContext):
          description="Dimension the angle between two lines, or of an arc.", keywords=("angle", "degrees"))
 def dimangular_cmd(ctx: CommandContext):
     r = yield GetEntity("Select arc, circle or line, or press Enter to pick 3 points", allow_none=True)
+    refs = ()
     if r is None:
         v = yield GetPoint("Specify angle vertex", rubber=None)
         a = yield GetPoint("Specify first angle endpoint", base=v)
@@ -120,17 +140,19 @@ def dimangular_cmd(ctx: CommandContext):
             v = res[0]
             a = max((e.p1, e.p2), key=lambda p: dist(p, v)) if dist(pick, v) < 1e-9 else pick
             b = max((e2.p1, e2.p2), key=lambda p: dist(p, v)) if dist(pick2, v) < 1e-9 else pick2
+            refs = ((e.handle, "line"), (e2.handle, "line"))
         else:
             ctx.echo("Pick an arc, circle or line.")
             return
     loc = yield GetPoint("Specify dimension arc line location", rubber=None,
                          preview=lambda c: [_dim(ctx, dimtype="angular", p1=v, p2=a, p3=b, location=c)])
-    d = ctx.doc.add(_dim(ctx, dimtype="angular", p1=v, p2=a, p3=b, location=loc))
+    d = ctx.doc.add(_dim(ctx, dimtype="angular", p1=v, p2=a, p3=b, location=loc, refs=refs))
     ctx.echo(f"Dimension text = {math.degrees(d.measurement()):.4g}°")
 
 
 def _radial(ctx: CommandContext, kind: str):
     e, pick = yield GetEntity("Select arc or circle")
+    refs = ((e.handle, "curve"),) if isinstance(e, (Arc, Circle)) else ()
     if not isinstance(e, (Arc, Circle)):
         g = ctx.doc.geometry(e)
         arcs = [p for p in g.prims(True) if hasattr(p, "r")]
@@ -144,7 +166,7 @@ def _radial(ctx: CommandContext, kind: str):
 
     def make(c):
         dirv = normalize(sub(c, center)) if dist(c, center) > 0 else (1.0, 0.0)
-        return _dim(ctx, dimtype=kind, p1=center, p2=add(center, mul(dirv, radius)), location=c)
+        return _dim(ctx, dimtype=kind, p1=center, p2=add(center, mul(dirv, radius)), location=c, refs=refs)
     loc = yield GetPoint("Specify dimension line location", rubber=None, preview=lambda c: [make(c)])
     d = ctx.doc.add(make(loc))
     ctx.echo(f"Dimension text = {ctx.fmt(d.measurement())}")
@@ -171,7 +193,7 @@ def dimordinate_cmd(ctx: CommandContext):
     while True:
         def make(c, axis_lock=axis_lock):
             axis = axis_lock or ("x" if abs(c[1] - f[1]) >= abs(c[0] - f[0]) else "y")
-            return _dim(ctx, dimtype="ordinate", p1=f, location=c, axis=axis)
+            return _dim(ctx, dimtype="ordinate", p1=f, location=c, axis=axis, refs=_refs(ctx, f))
         r = yield GetPoint("Specify leader endpoint", keywords=kw("Xdatum", "Ydatum"), base=f, rubber=None,
                            preview=lambda c: [make(c)])
         if r == "Xdatum":

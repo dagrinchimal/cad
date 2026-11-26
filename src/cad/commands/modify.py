@@ -13,7 +13,7 @@ from ..core.geom2d import Seg
 from ..core.geom2d.transform import Affine2
 from ..core.geom2d.vec import angle_of, dist, sub
 from ..core.model import (
-    Arc, BlockReference, Circle, Dimension, Ellipse, Entity, Leader, Line, MText, Point, Polyline, Spline, Text,
+    ArrayEntity, Arc, BlockReference, Circle, Dimension, Ellipse, Entity, Leader, Line, MText, Point, Polyline, Spline, Text,
     Viewport,
 )
 from ..core.model.entities import AttributeDefinition
@@ -58,6 +58,37 @@ def transformed_preview(ents: list[Entity], make):
 
 
 def apply_transform(ctx: CommandContext, ents: list[Entity], m: Affine2, copy: bool) -> int:
+    n = 0
+    moving = {e.handle for e in ents}
+    old_to_new: dict[int, int] = {}
+    arrays = []
+    for e in ents:
+        if isinstance(e, ArrayEntity):
+            arrays.append(e)
+            continue
+        try:
+            t = e.transformed(m)
+        except NotImplementedError:
+            continue
+        if copy:
+            old_to_new[e.handle] = ctx.doc.add(t.with_props(handle=0)).handle
+        else:
+            ctx.doc.replace(t)
+        n += 1
+    for e in arrays:
+        with_src = e.sources <= moving
+        t = e.transformed_with_sources(m) if with_src else e.transformed(m)
+        if copy:
+            if with_src:
+                t = t.with_props(sources=frozenset(old_to_new.get(h, h) for h in e.sources))
+            ctx.doc.add(t.with_props(handle=0))
+        else:
+            ctx.doc.replace(t)
+        n += 1
+    return n
+
+
+def _apply_transform_old(ctx: CommandContext, ents: list[Entity], m: Affine2, copy: bool) -> int:
     n = 0
     for e in ents:
         try:
@@ -413,17 +444,17 @@ def arrayrect_cmd(ctx: CommandContext):
     b = [ctx.doc.geometry(e).bbox for e in ents]
     w = max(x[2] for x in b if x) - min(x[0] for x in b if x)
     h = max(x[3] for x in b if x) - min(x[1] for x in b if x)
-    dy = yield GetDistance("Specify the distance between rows", default=h * 1.5 or 1.0,
-                           default_text=ctx.fmt(h * 1.5 or 1.0), positive=False) if rows > 1 else 0.0
-    dx = yield GetDistance("Specify the distance between columns", default=w * 1.5 or 1.0,
-                           default_text=ctx.fmt(w * 1.5 or 1.0), positive=False) if cols > 1 else 0.0
-    n = 0
-    for i in range(rows):
-        for j in range(cols):
-            if i == 0 and j == 0:
-                continue
-            n += apply_transform(ctx, ents, Affine2.translate(j * dx, i * dy), copy=True)
-    ctx.echo(f"{n} copies made ({rows} rows x {cols} columns).")
+    dy = dx = 0.0
+    if rows > 1:
+        dy = yield GetDistance("Specify the distance between rows", default=h * 1.5 or 1.0,
+                               default_text=ctx.fmt(h * 1.5 or 1.0), positive=False)
+    if cols > 1:
+        dx = yield GetDistance("Specify the distance between columns", default=w * 1.5 or 1.0,
+                               default_text=ctx.fmt(w * 1.5 or 1.0), positive=False)
+    ctx.doc.add(ArrayEntity(sources=frozenset(e.handle for e in ents), kind="rect", rows=rows, cols=cols,
+                            row_vec=(0.0, dy), col_vec=(dx, 0.0)), use_current_props=True)
+    ctx.echo(f"Array of {rows} rows x {cols} columns created. Edit the original objects and the copies follow; "
+             "change rows, columns or spacing in Properties; EXPLODE makes the copies independent.")
 
 
 @command("ARRAYPOLAR", label="Polar Array", aliases=("ARP",), group="Modify",
@@ -442,18 +473,10 @@ def arraypolar_cmd(ctx: CommandContext):
     rot = yield GetPoint("Rotate items as they are copied?", keywords=kw("Yes", "No"), default="Yes",
                          default_text="Yes", rubber=None)
     full = abs(abs(fill) - math.tau) < 1e-9 or abs(fill) < 1e-12
-    step = (math.tau if full else fill) / (n if full else n - 1)
-    for k in range(1, n):
-        ang = step * k
-        if rot == "No":
-            ref = ctx.doc.geometry(ents[0]).bbox
-            c0 = ((ref[0] + ref[2]) / 2, (ref[1] + ref[3]) / 2)
-            c1 = Affine2.rotate(ang, center).apply(c0)
-            m = Affine2.translate(c1[0] - c0[0], c1[1] - c0[1])
-        else:
-            m = Affine2.rotate(ang, center)
-        apply_transform(ctx, ents, m, copy=True)
-    ctx.echo(f"{n} items around the center.")
+    ctx.doc.add(ArrayEntity(sources=frozenset(e.handle for e in ents), kind="polar", center=center, count=n,
+                            fill_angle=math.tau if full else fill, rotate_items=(rot != "No")),
+                use_current_props=True)
+    ctx.echo(f"{n} items around the center. Edit the original and every copy follows.")
 
 
 # ------------------------------------------------------------------ break / join / explode
@@ -516,6 +539,13 @@ def explode_cmd(ctx: CommandContext):
     ents = editable(ctx, (yield select(ctx, "Select objects to explode")))
     count = 0
     for e in ents:
+        if isinstance(e, ArrayEntity):
+            from ..core.model.geometry import explode_array
+            for p in explode_array(ctx.doc, e):
+                ctx.doc.add(p)
+            ctx.doc.delete(e.handle)
+            count += 1
+            continue
         parts = explode(ctx.doc, e)
         if parts is None:
             continue

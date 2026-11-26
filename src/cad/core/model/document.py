@@ -240,10 +240,10 @@ class Document:
 
     def commit(self) -> None:
         tx = self._require_tx()
-        if tx.changes and self.pre_commit_hooks and not self._in_hooks:
+        if tx.changes and not self._in_hooks:
             self._in_hooks = True
             try:
-                for hook in list(self.pre_commit_hooks):
+                for hook in list(self.pre_commit_hooks) + [_associativity_hook]:
                     hook(self, tx)
             except BaseException:
                 self._in_hooks = False
@@ -542,3 +542,9 @@ class Document:
     def is_locked(self, e: Entity) -> bool:
         layer = self.layers.get(e.layer)
         return layer is not None and layer.locked
+
+
+def _associativity_hook(doc: "Document", tx) -> None:
+    """Dimensions, hatches and arrays follow their objects (always runs last, after constraints)."""
+    from ..associative import AssociativityManager
+    AssociativityManager.update(doc, tx)

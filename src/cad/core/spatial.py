@@ -24,6 +24,7 @@ class SpatialIndex:
         self._tree = rindex.Index(interleaved=True)
         self.rebuild()
         doc.add_listener(self._on_change)
+        doc._spatial_index = self
 
     def detach(self) -> None:
         self.doc.remove_listener(self._on_change)

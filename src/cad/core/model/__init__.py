@@ -1,6 +1,6 @@
 from .document import ChangeSet, Document, DocumentError, Header, Layer
 from .entities import (
-    ENTITY_TYPES, MODEL_SPACE, Arc, AttributeDefinition, BlockReference, Circle, Dimension, Ellipse, Entity,
+    ENTITY_TYPES, MODEL_SPACE, Arc, ArrayEntity, AttributeDefinition, BlockReference, Circle, Dimension, Ellipse, Entity,
     Hatch, Leader, Line, MText, Point, Polyline, Spline, Text, UnknownEntity, Viewport, entity_from_dict,
     entity_to_dict,
 )
@@ -11,6 +11,7 @@ from .styles import (
 )
 
 __all__ = [
+    "ArrayEntity",
     "MODEL_SPACE", "AttributeDefinition", "BlockReference", "Dimension", "Ellipse", "Hatch", "Leader", "MText",
     "Spline", "Text", "Viewport", "PAPER_SIZES", "BlockDefinition", "DimStyle", "Group", "Layout",
     "Arc", "BYBLOCK", "BYLAYER", "ChangeSet", "Circle", "Document", "DocumentError", "ENTITY_TYPES",

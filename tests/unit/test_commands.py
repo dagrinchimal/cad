@@ -348,12 +348,29 @@ def test_fillet_chamfer_commands(runner):
 
 def test_arrays(runner):
     (c,) = _seed(runner, Circle(center=(0, 0), radius=1))
+    from cad.core.model import ArrayEntity
+    doc = runner.ctx.doc
     runner.ctx.selection = {c.handle}
     typed(runner, "ARRAYRECT", "2", "3", "10", "5")
-    assert len(ents(runner, Circle)) == 6
+    arr = ents(runner, ArrayEntity)[0]
+    g = doc.geometry(arr)
+    assert len(g.centers) == 5 and (10.0, 10.0) in [tuple(round(v, 9) for v in p) for p in g.centers]
     runner.ctx.selection = {c.handle}
     typed(runner, "ARRAYPOLAR", "20,0", "8", "360", "Y")
-    assert len(ents(runner, Circle)) == 6 + 7
+    pol = ents(runner, ArrayEntity)[1]
+    assert len(doc.geometry(pol).centers) == 7
+    # editing the source updates every copy
+    with doc.transaction("grow"):
+        doc.replace(doc.get(c.handle).with_props(radius=3))
+    assert all(abs(p.r - 3) < 1e-9 for p in doc.geometry(arr).prims())
+    # explode makes real copies
+    runner.ctx.selection = {arr.handle}
+    typed(runner, "X")
+    assert len(ents(runner, Circle)) == 6 and len(ents(runner, ArrayEntity)) == 1
+    # erasing the source removes its live array
+    with doc.transaction("del"):
+        doc.delete(c.handle)
+    assert not ents(runner, ArrayEntity)
 
 
 def test_break_join_explode_stretch(runner):

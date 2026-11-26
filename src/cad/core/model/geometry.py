@@ -19,7 +19,7 @@ from ..geom2d.fill import point_in_loops
 from ..geom2d.transform import Affine2
 from ..text import TextRun, text_engine
 from .entities import (
-    AttributeDefinition, BlockReference, Dimension, Entity, Hatch, Leader, MText, Text, UnknownEntity,
+    ArrayEntity, AttributeDefinition, BlockReference, Dimension, Entity, Hatch, Leader, MText, Text, UnknownEntity,
 )
 from .styles import BYBLOCK, BYLAYER, LW_BYBLOCK, LW_BYLAYER
 
@@ -139,6 +139,8 @@ def build_geometry(doc, e: Entity, depth: int = 0) -> Geometry:
         g = leader_geometry(doc, e)
     elif isinstance(e, BlockReference):
         g = _block_geometry(doc, e, depth)
+    elif isinstance(e, ArrayEntity):
+        g = _array_geometry(doc, e, depth)
     else:
         g = _simple(e)
     g.compute_bbox()
@@ -245,6 +247,36 @@ def _block_geometry(doc, ref: BlockReference, depth: int, inherited: dict | None
     return g
 
 
+def _array_geometry(doc, arr: ArrayEntity, depth: int) -> Geometry:
+    g = Geometry()
+    if depth > MAX_BLOCK_DEPTH:
+        return g
+    sources = [doc.entities[h] for h in sorted(arr.sources) if h in doc.entities]
+    boxes = [b for b in (doc.geometry(s).bbox for s in sources if not isinstance(s, ArrayEntity)) if b]
+    ref = ((min(b[0] for b in boxes) + max(b[2] for b in boxes)) / 2,
+           (min(b[1] for b in boxes) + max(b[3] for b in boxes)) / 2) if boxes else (0.0, 0.0)
+    for m in arr.steps(ref):
+        sf = m.scale_factor
+        for src in sources:
+            if isinstance(src, ArrayEntity):
+                continue
+            cg = _transform_geometry(build_geometry(doc, src, depth + 1), m, sf)
+            for part in cg.parts:
+                if part.color is None:
+                    part.color = doc.effective_color(src)
+                    part.linetype = doc.effective_linetype(src).name
+                    part.lineweight = doc.effective_lineweight(src)
+                g.parts.append(part)
+            g.endpoints += cg.endpoints
+            g.midpoints += cg.midpoints
+            g.centers += cg.centers
+            g.quadrants += cg.quadrants
+            g.nodes += cg.nodes
+            g.insertions += cg.insertions
+            g.pick_areas += cg.pick_areas
+    return g
+
+
 def _transform_geometry(cg: Geometry, m: Affine2, sf: float) -> Geometry:
     out = Geometry()
     for part in cg.parts:
@@ -285,4 +317,17 @@ def explode_block_reference(doc, ref: BlockReference) -> list[Entity]:
                          color=style["color"] if child.color in (BYBLOCK,) or child.layer == "0" else child.color,
                          space=ref.space)
         out.append(e)
+    return out
+
+
+def explode_array(doc, arr: ArrayEntity) -> list:
+    """Independent copies of the sources (the sources themselves stay)."""
+    sources = [doc.entities[h] for h in sorted(arr.sources) if h in doc.entities]
+    boxes = [b for b in (doc.geometry(s).bbox for s in sources) if b]
+    ref = ((min(b[0] for b in boxes) + max(b[2] for b in boxes)) / 2,
+           (min(b[1] for b in boxes) + max(b[3] for b in boxes)) / 2) if boxes else (0.0, 0.0)
+    out = []
+    for m in arr.steps(ref):
+        for src in sources:
+            out.append(src.transformed(m).with_props(handle=0))
     return out

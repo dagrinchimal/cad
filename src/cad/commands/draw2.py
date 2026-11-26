@@ -251,7 +251,8 @@ def mtext_cmd(ctx: CommandContext):
 
 
 # ------------------------------------------------------------------ hatch
-def closed_loop_of(e) -> tuple | None:
+from ..core.associative import closed_loop_of  # noqa: E402
+def _closed_loop_of_old(e) -> tuple | None:
     """Boundary loop (x, y, bulge vertices) for closed objects, else None."""
     if isinstance(e, Circle):
         x, y, r = e.center[0], e.center[1], e.radius
@@ -296,6 +297,8 @@ def hatch_cmd(ctx: CommandContext):
     h = ctx.doc.header
     pattern, scale, angle = h.hatch_pattern, h.hatch_scale, h.hatch_angle
     loops_all: list[tuple] = []
+    sources: set[int] = set()
+    seeds: list = []
     names = "/".join(PATTERN_NAMES)
     while True:
         r = yield GetPoint(f"Pick internal point (pattern {pattern}, scale {scale:g}, angle "
@@ -324,21 +327,29 @@ def hatch_cmd(ctx: CommandContext):
                 lp = closed_loop_of(e) if e is not None else None
                 if lp:
                     loops_all.append(lp)
+                    sources.add(hd)
             if not loops_all:
                 ctx.echo("None of those objects are closed shapes.")
             continue
-        loops, _ = pick_area(ctx, r)
+        loops, size = pick_area(ctx, r)
         if not loops:
             ctx.echo("That point isn't inside a closed area. Make sure the shape is fully closed and visible.")
             continue
         for lp in loops:
             loops_all.append(tuple((float(x), float(y), 0.0) for x, y in lp))
+        from ..core.associative import sources_of_loops
+        rect = ctx.index.extents()
+        sources |= sources_of_loops(ctx.doc, loops, ctx.index.query(rect) if rect else [], size * 1e-6)
+        seeds.append(r)
         ctx.echo(f"Area found ({len(loops) - 1} island(s)). Pick more areas or press Enter.")
     if not loops_all:
         return
     if (pattern, scale, angle) != (h.hatch_pattern, h.hatch_scale, h.hatch_angle):
         ctx.doc.set_header(replace(ctx.doc.header, hatch_pattern=pattern, hatch_scale=scale, hatch_angle=angle))
-    hatch = Hatch(loops=tuple(loops_all), pattern=pattern, pattern_scale=scale, pattern_angle=angle)
+    # associative when it came from one picked area or from selected closed objects only
+    assoc = (len(seeds) == 1) or (not seeds and sources)
+    hatch = Hatch(loops=tuple(loops_all), pattern=pattern, pattern_scale=scale, pattern_angle=angle,
+                  sources=frozenset(sources) if assoc else frozenset(), seed=seeds[0] if (assoc and seeds) else None)
     ctx.doc.add(hatch, use_current_props=True)
     ctx.echo(f"Hatch created, area = {ctx.fmt(math.sqrt(hatch.area()))} squared.")
 

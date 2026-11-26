@@ -109,6 +109,14 @@ def _to_json(v, kind: str):
         return [[list(p) for p in loop] for loop in v]
     if kind == "pairs":
         return [list(p) for p in v]
+    if kind == "refs":
+        return [[int(h), str(p)] for h, p in v]
+    if kind == "ints":
+        return sorted(int(x) for x in v)
+    if kind == "optpt":
+        return None if v is None else [v[0], v[1]]
+    if kind == "affine":
+        return [v.a, v.b, v.c, v.d, v.e, v.f]
     if kind == "floats":
         return list(v)
     return v
@@ -126,6 +134,14 @@ def _from_json(v, kind: str):
                      for loop in v)
     if kind == "pairs":
         return tuple((str(p[0]), str(p[1])) for p in v)
+    if kind == "refs":
+        return tuple((int(p[0]), str(p[1])) for p in v)
+    if kind == "ints":
+        return frozenset(int(x) for x in v)
+    if kind == "optpt":
+        return None if v is None else (float(v[0]), float(v[1]))
+    if kind == "affine":
+        return Affine2(*[float(x) for x in v])
     if kind == "floats":
         return tuple(float(x) for x in v)
     if kind == "float":
@@ -608,11 +624,14 @@ class Hatch(Entity):
     Islands are simply more loops: the even-odd rule decides what's inside."""
     TYPE: ClassVar[str] = "hatch"
     FIELDS: ClassVar[dict[str, str]] = {"loops": "loops", "pattern": "str", "pattern_scale": "float",
-                                        "pattern_angle": "float"}
+                                        "pattern_angle": "float", "sources": "ints", "seed": "optpt"}
     loops: tuple[tuple[Vertex, ...], ...]
     pattern: str = "SOLID"
     pattern_scale: float = 1.0
     pattern_angle: float = 0.0
+    # associativity: boundary objects; seed = a point inside (picked-area hatches), None = selected objects
+    sources: frozenset[int] = frozenset()
+    seed: Vec | None = None
 
     def loop_points(self, tol: float = 0.0) -> list[np.ndarray]:
         out = []
@@ -654,7 +673,8 @@ class Hatch(Entity):
         size = max(b[2] - b[0], b[3] - b[1]) if b else 1.0
         loops = tuple(transform_vertices(lp, True, m, size) for lp in self.loops)
         return replace(self, loops=loops, pattern_scale=self.pattern_scale * m.scale_factor,
-                       pattern_angle=_reflected_angle(m, self.pattern_angle))
+                       pattern_angle=_reflected_angle(m, self.pattern_angle),
+                       seed=m.apply(self.seed) if self.seed is not None else None)
 
 
 # ================================================================== dimensions & leaders
@@ -674,7 +694,7 @@ class Dimension(Entity):
     TYPE: ClassVar[str] = "dimension"
     FIELDS: ClassVar[dict[str, str]] = {"dimtype": "str", "p1": "pt", "p2": "pt", "p3": "pt", "location": "pt",
                                         "angle": "float", "axis": "str", "text": "str", "style": "str",
-                                        "origin": "pt"}
+                                        "origin": "pt", "refs": "refs"}
     dimtype: str
     p1: Vec
     p2: Vec = (0.0, 0.0)
@@ -685,6 +705,13 @@ class Dimension(Entity):
     text: str = ""
     style: str = "Standard"
     origin: Vec = (0.0, 0.0)              # ordinate datum
+    # associativity: what p1, p2, p3 are attached to, as (handle, part); (0, "") = not attached.
+    # radius/diameter: refs[0] = (circle/arc handle, "curve")
+    refs: tuple[tuple[int, str], ...] = ()
+
+    @property
+    def is_associative(self) -> bool:
+        return any(h for h, _ in self.refs)
 
     def measurement(self) -> float:
         """The measured value: length (mm) or angle (radians)."""
@@ -851,6 +878,61 @@ class Viewport(Entity):
                        scale=self.scale * s)
 
 
+# ================================================================== associative arrays
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ArrayEntity(Entity):
+    """Live copies of source objects in rows/columns or around a center.
+
+    The source objects stay ordinary objects; edit them and every copy follows.
+    copy(k) = placement @ step(k) @ source, for k = 1 .. count-1.
+    """
+    TYPE: ClassVar[str] = "array"
+    FIELDS: ClassVar[dict[str, str]] = {"sources": "ints", "kind": "str", "rows": "int", "cols": "int",
+                                        "row_vec": "pt", "col_vec": "pt", "center": "pt", "count": "int",
+                                        "fill_angle": "float", "rotate_items": "bool", "placement": "affine"}
+    sources: frozenset[int]
+    kind: str = "rect"                  # "rect" or "polar"
+    rows: int = 1
+    cols: int = 1
+    row_vec: Vec = (0.0, 10.0)          # offset from one row to the next
+    col_vec: Vec = (10.0, 0.0)          # offset from one column to the next
+    center: Vec = (0.0, 0.0)
+    count: int = 6
+    fill_angle: float = math.tau
+    rotate_items: bool = True
+    placement: Affine2 = field(default_factory=Affine2)
+
+    def steps(self, ref: Vec = (0.0, 0.0)) -> list[Affine2]:
+        """ref: middle of the source objects (used when polar items keep their orientation)."""
+        out = []
+        if self.kind == "rect":
+            for i in range(max(1, self.rows)):
+                for j in range(max(1, self.cols)):
+                    if i == 0 and j == 0:
+                        continue
+                    out.append(Affine2.translate(i * self.row_vec[0] + j * self.col_vec[0],
+                                                 i * self.row_vec[1] + j * self.col_vec[1]))
+        else:
+            n = max(2, self.count)
+            full = abs(abs(self.fill_angle) - math.tau) < 1e-9
+            step = (math.tau if full else self.fill_angle) / (n if full else n - 1)
+            for k in range(1, n):
+                rot = Affine2.rotate(step * k, self.center)
+                if self.rotate_items:
+                    out.append(rot)
+                else:
+                    c1 = rot.apply(ref)
+                    out.append(Affine2.translate(c1[0] - ref[0], c1[1] - ref[1]))
+        return [self.placement @ s for s in out]
+
+    def transformed(self, m: Affine2) -> "ArrayEntity":
+        return replace(self, placement=m @ self.placement)
+
+    def transformed_with_sources(self, m: Affine2) -> "ArrayEntity":
+        """When the sources move by m too, keep the copies in the same place relative to them."""
+        return replace(self, placement=m @ self.placement @ m.inverse())
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class UnknownEntity(Entity):
     """An entity type this version doesn't know. Kept untouched and saved back."""
@@ -870,7 +952,7 @@ def _props(e: Entity) -> dict:
 
 ENTITY_TYPES: dict[str, type[Entity]] = {
     cls.TYPE: cls for cls in (Line, Circle, Arc, Polyline, Point, Ellipse, Spline, Text, MText, Hatch,
-                              Dimension, Leader, AttributeDefinition, BlockReference, Viewport)
+                              Dimension, Leader, AttributeDefinition, BlockReference, Viewport, ArrayEntity)
 }
 
 COMMON_PROP_NAMES = ("handle", "layer", "color", "linetype", "lineweight", "ltscale", "space")
