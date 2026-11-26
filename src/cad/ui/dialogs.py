@@ -204,7 +204,14 @@ class UnitsDialog(QDialog):
         self.angle_places = QSpinBox()
         self.angle_places.setRange(0, 8)
         self.angle_places.setValue(units.angle_decimal_places)
+        self.style_box = QComboBox()
+        self.style_box.addItem('Revit style:  3 4-1/2 = 3\'-4 1/2",  0 1.5 = 1 1/2",  3 = 3 feet', "revit")
+        self.style_box.addItem('AutoCAD style:  3 = 3 inches,  1 1/2 = 1 1/2"', "autocad")
+        self.style_box.setCurrentIndex(0 if units.input_style == "revit" else 1)
+        self.style_box.setToolTip("How plain numbers are read in feet-inches drawings. Numbers with ' or \" marks "
+                                  "always mean what they say.")
         form = QFormLayout()
+        form.addRow("Typing feet-inches", self.style_box)
         form.addRow("Millimeter decimal places", self.places)
         form.addRow("Inch precision (nearest)", self.den)
         form.addRow("Angle decimal places", self.angle_places)
@@ -232,7 +239,8 @@ class UnitsDialog(QDialog):
         mode = next(m for m, rb in self.radios.items() if rb.isChecked())
         return UnitSettings(mode=mode, decimal_places=self.places.value(),
                             denominator=int(self.den.currentData()),
-                            angle_decimal_places=self.angle_places.value())
+                            angle_decimal_places=self.angle_places.value(),
+                            input_style=self.style_box.currentData())
 
     def _preview(self, *_):
         u = self.result_units()

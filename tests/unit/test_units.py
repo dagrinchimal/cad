@@ -10,7 +10,8 @@ from cad.core.units import (
 
 MM = UnitSettings(mode=UnitMode.MM)
 FRAC = UnitSettings(mode=UnitMode.FRACTIONAL)
-ARCH = UnitSettings(mode=UnitMode.ARCHITECTURAL)
+ARCH = UnitSettings(mode=UnitMode.ARCHITECTURAL, input_style="autocad")
+REVIT = UnitSettings(mode=UnitMode.ARCHITECTURAL)
 IN = MM_PER_INCH
 FT = 12 * MM_PER_INCH
 
@@ -149,3 +150,29 @@ def test_scales():
     names = [s.name for s in standard_scales(UnitMode.ARCHITECTURAL)]
     assert names[0] == "1:1" and '1/4" = 1\'-0"' in names and "1:50" in names
     assert standard_scales(UnitMode.MM)[1].name == "1:2"
+
+
+# ---------------------------------------------------------------- Revit-style typing
+@pytest.mark.parametrize("text,feet,inches", [
+    ("0 1.5", 0, 1.5), ("3 4-1/2", 3, 4.5), ("3 4 1/2", 3, 4.5), ("3 4.5", 3, 4.5), ("3", 3, 0),
+    ("3.5", 3.5, 0), ("1 1/2", 1, 0.5), ("0 3/8", 0, 0.375), ("12 0", 12, 0), ("-2 6", -2, -6),
+    ('6"', 0, 6), ("3'", 3, 0), ("3'-4\"", 3, 4), ("25.4mm", 0, 1), ("10 11 63/64", 10, 11 + 63 / 64),
+])
+def test_revit_style_feet_inches(text, feet, inches):
+    assert parse_length(text, REVIT) == pytest.approx(feet * FT + inches * IN)
+
+
+def test_revit_style_only_in_feet_inches_mode():
+    assert parse_length("1 1/2", FRAC) == pytest.approx(1.5 * IN)
+    assert parse_length("3", UnitSettings(mode=UnitMode.ARCHITECTURAL, input_style="autocad")) == pytest.approx(3 * IN)
+    with pytest.raises(UnitParseError):
+        parse_length("3 4", MM)
+    assert UnitSettings.from_dict({"mode": "architectural"}).input_style == "revit"
+
+
+def test_revit_round_trip():
+    import random as _r
+    rng = _r.Random(3)
+    for _ in range(300):
+        mm = rng.randint(-50000, 50000) / 16 * IN
+        assert parse_length(format_length(mm, REVIT), REVIT) == pytest.approx(mm, abs=1e-9)

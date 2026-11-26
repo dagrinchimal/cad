@@ -6,7 +6,9 @@ Every format is accepted in every unit mode:
     3'  3ft  3'-4 1/2"  3' 4.5  3'4"  3 ft 4 in  -2'-6"
 
 A bare number (no unit mark) uses the drawing's input unit: millimetres in MM
-mode, inches in the two inch modes (as AutoCAD does).
+mode, inches in fractional-inch mode. In feet-inches mode it depends on the typing
+style: Revit style (default) reads "3" as 3 feet and "3 4-1/2" or "0 1.5" as feet
+then inches; AutoCAD style reads bare numbers as inches.
 Returned lengths are always millimetres.
 """
 from __future__ import annotations
@@ -48,6 +50,8 @@ _RE_FEET = re.compile(rf"^{_mixed('f')}\s*{_FEET_MARK}$")
 _RE_INCHES = re.compile(rf"^{_mixed('i')}\s*{_INCH_MARK}$")
 _RE_METRIC = re.compile(rf"^{_mixed('m')}\s*{_METRIC_MARK}$")
 _RE_BARE = re.compile(rf"^{_mixed('b')}$")
+# Revit style: "3 4-1/2", "0 1.5", "3 4 1/2", "1 1/2" -> feet, then inches
+_RE_REVIT = re.compile(rf"^(?P<rf>{_NUM})\s+{_mixed('i')}$")
 
 
 def _normalize(text: str) -> str:
@@ -98,6 +102,8 @@ def parse_length(text: str, settings: UnitSettings | None = None) -> float:
         mm = _mixed_value(m, "i") * MM_PER_INCH
     elif m := _RE_METRIC.match(t):
         mm = _mixed_value(m, "m") * _METRIC[m.group("unit")]
+    elif settings.revit_typing and (m := _RE_REVIT.match(t)):
+        mm = float(m.group("rf")) * MM_PER_FOOT + _mixed_value(m, "i") * MM_PER_INCH
     elif m := _RE_BARE.match(t):
         mm = _mixed_value(m, "b") * settings.default_input_mm
     else:
