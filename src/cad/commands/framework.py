@@ -127,8 +127,17 @@ class GetSelection(Request):
 
 @dataclass(slots=True)
 class GetEntity(Request):
-    """Pick one object. Answers (entity, picked point)."""
+    """Pick one object. Answers (entity, picked point).
+
+    With empty_ok, a click on empty space answers EmptyPick(point) instead of an error
+    (TRIM/EXTEND start a fence or crossing box that way)."""
     preview: PreviewFn | None = None
+    empty_ok: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class EmptyPick:
+    point: Vec
 
 
 def kw(*names: str) -> tuple[Keyword, ...]:
@@ -179,6 +188,7 @@ class CommandContext:
     space: str = "*Model"
     constraints: object = None                             # ConstraintManager (set by the UI / tests)
     memory: dict = field(default_factory=dict)            # per-command remembered values
+    shift: bool = False                                     # Shift held during the last click (set by the UI)
     messages: list[str] = field(default_factory=list)
     on_message: Callable[[str], None] | None = None
 
@@ -483,6 +493,9 @@ class CommandRunner:
             self._send(dist(req.base, pt))
         elif isinstance(req, GetEntity):
             e = self.ctx.index.pick(pt, self.ctx.view.pick_tolerance())
+            if e is None and req.empty_ok:
+                self._send(EmptyPick(pt))
+                return
             if e is None:
                 self.ctx.echo("Nothing found there. Click right on an object.")
                 return

@@ -71,6 +71,17 @@ def format_length(mm: float, settings: UnitSettings) -> str:
     return format_architectural(inches, settings.denominator)
 
 
+def format_area(mm2: float, settings: UnitSettings) -> str:
+    """Area for display: m² (and mm²) in metric drawings, sq ft or sq in in imperial ones."""
+    a = abs(mm2)
+    if settings.mode is UnitMode.MM:
+        return f"{a / 1e6:,.3f} m²" if a >= 1e5 else f"{a:,.{settings.decimal_places}f} mm²"
+    sq_in = a / (MM_PER_INCH ** 2)
+    if settings.mode is UnitMode.ARCHITECTURAL:
+        return f"{sq_in / 144:,.2f} sq ft"
+    return f"{sq_in:,.2f} sq in"
+
+
 def format_point(p: tuple[float, ...], settings: UnitSettings) -> str:
     return ", ".join(format_length(c, settings) for c in p)
 

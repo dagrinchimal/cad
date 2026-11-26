@@ -11,10 +11,10 @@ from PySide6.QtWidgets import QComboBox, QFormLayout, QLabel, QLineEdit, QScroll
 from ..core.geom2d.vec import dist
 from ..core.model import (
     Arc, BlockReference, Circle, Dimension, Document, Ellipse, Entity, Hatch, Leader, Line, MText, Point, Polyline,
-    Spline, Text, Viewport,
+    Spline, Text, Viewport, ArrayEntity,
 )
 from ..core.model.hatch_patterns import PATTERN_NAMES
-from ..core.units import format_angle, format_length, parse_angle, UnitParseError
+from ..core.units import format_angle, format_area, format_length, parse_angle, UnitParseError
 from .widgets import ColorCombo, LengthEdit, LinetypeCombo, LineweightCombo
 
 MIXED = None
@@ -161,7 +161,7 @@ class PropertiesPanel(QWidget):
             self._len("Radius", e.radius, lambda v: replace(e, radius=v), positive=True)
             self._len("Diameter", e.diameter, lambda v: replace(e, radius=v / 2), positive=True)
             self._ro("Circumference", format_length(2 * math.pi * e.radius, u))
-            self._ro("Area", f"{format_length(math.sqrt(e.area), u)} squared")
+            self._ro("Area", format_area(e.area, u))
         elif isinstance(e, Arc):
             self._len("Center X", e.center[0], lambda v: replace(e, center=(v, e.center[1])))
             self._len("Center Y", e.center[1], lambda v: replace(e, center=(e.center[0], v)))
@@ -184,7 +184,7 @@ class PropertiesPanel(QWidget):
             self._len("Minor radius", ml * e.ratio, lambda v: replace(e, ratio=min(1.0, v / ml)) if ml else None,
                       positive=True)
             if e.is_full:
-                self._ro("Area", f"{format_length(math.sqrt(e.area()), u)} squared")
+                self._ro("Area", format_area(e.area(), u))
         elif isinstance(e, Spline):
             self._ro("Fit points", str(len(e.fit_points)))
             self._ro("Closed", "Yes" if e.closed else "No")
@@ -202,12 +202,15 @@ class PropertiesPanel(QWidget):
             self._choice("Pattern", list(PATTERN_NAMES), e.pattern, lambda v: replace(e, pattern=v))
             self._num("Pattern scale", e.pattern_scale, lambda v: replace(e, pattern_scale=v) if v > 0 else None)
             self._ang("Pattern angle", e.pattern_angle, lambda a: replace(e, pattern_angle=a))
-            self._ro("Area", f"{format_length(math.sqrt(e.area()), u)} squared")
+            self._ro("Area", format_area(e.area(), u))
+            self._ro("Associative", "Yes (follows its boundary)" if e.sources else "No")
         elif isinstance(e, Dimension):
             val = e.measurement()
             self._ro("Measurement", f"{math.degrees(val):.4g}°" if e.dimtype == "angular" else format_length(val, u))
             self._text("Text override", e.text, lambda t: replace(e, text=t))
             self._ro("Hint", "Leave empty for the measured value; <> stands for it, e.g. <> TYP")
+            self._ro("Associative", "Yes (click its number in the drawing to change the geometry)"
+                     if e.is_associative else "No")
             styles = list(self.get_doc().dimstyles)
             self._choice("Style", styles, e.style, lambda v: replace(e, style=v))
         elif isinstance(e, Leader):
@@ -224,12 +227,14 @@ class PropertiesPanel(QWidget):
                            lambda t, tag=ad.tag: e.with_attrib(tag, t))
         elif isinstance(e, Viewport):
             self._viewport_rows(e)
+        elif isinstance(e, ArrayEntity):
+            self._array_rows(e)
         elif isinstance(e, Polyline):
             self._ro("Vertices", str(len(e.vertices)))
             self._ro("Closed", "Yes" if e.closed else "No")
             self._ro("Length", format_length(e.length(), u))
             if e.closed:
-                self._ro("Area", f"{format_length(math.sqrt(abs(e.area())), u)} squared")
+                self._ro("Area", format_area(abs(e.area()), u))
 
     def _text(self, label: str, text: str, apply, multiline: bool = False) -> None:
         w = QLineEdit(text.replace("\n", " ⏎ ") if multiline else text)
@@ -269,6 +274,24 @@ class PropertiesPanel(QWidget):
         cb.setCurrentText(current)
         cb.activated.connect(lambda i: self._replace(apply(cb.itemText(i))))
         self.geo.addRow(label, cb)
+
+    def _array_rows(self, e: ArrayEntity) -> None:
+        self._ro("Source objects", str(len(e.sources)))
+
+        def scaled(vec, v):
+            L = math.hypot(*vec)
+            return (v, 0.0) if L < 1e-12 else (vec[0] / L * v, vec[1] / L * v)
+        if e.kind == "rect":
+            self._num("Rows", e.rows, lambda v: replace(e, rows=max(1, int(v))) if v >= 1 else None)
+            self._num("Columns", e.cols, lambda v: replace(e, cols=max(1, int(v))) if v >= 1 else None)
+            self._len("Row spacing", math.hypot(*e.row_vec), lambda v: replace(e, row_vec=scaled(e.row_vec, v)))
+            self._len("Column spacing", math.hypot(*e.col_vec), lambda v: replace(e, col_vec=scaled(e.col_vec, v)))
+        else:
+            self._num("Items", e.count, lambda v: replace(e, count=max(2, int(v))) if v >= 2 else None)
+            self._ang("Angle to fill", e.fill_angle, lambda a: replace(e, fill_angle=a))
+            self._choice("Rotate items", ["Yes", "No"], "Yes" if e.rotate_items else "No",
+                         lambda t: replace(e, rotate_items=t == "Yes"))
+        self._ro("Note", "Edit the source objects to change every copy; Explode for separate copies")
 
     def _viewport_rows(self, e: Viewport) -> None:
         from ..core.units import standard_scales

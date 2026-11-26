@@ -6,19 +6,54 @@ import math
 from dataclasses import replace
 
 from ..core.edit import (
-    Curve, EditError, break_at, break_between, chamfer_lines, explode, extend, fillet_curves, fillet_lines,
-    fillet_polyline, join, offset, trim,
+    Curve,
+    EditError,
+    break_at,
+    break_between,
+    chamfer_lines,
+    explode,
+    extend,
+    fillet_curves,
+    fillet_lines,
+    fillet_polyline,
+    join,
+    offset,
+    trim,
 )
 from ..core.geom2d import Seg
+from ..core.geom2d.construct import intersect
 from ..core.geom2d.transform import Affine2
 from ..core.geom2d.vec import angle_of, dist, sub
 from ..core.model import (
-    ArrayEntity, Arc, BlockReference, Circle, Dimension, Ellipse, Entity, Leader, Line, MText, Point, Polyline, Spline, Text,
+    Arc,
+    ArrayEntity,
+    BlockReference,
+    Circle,
+    Dimension,
+    Ellipse,
+    Entity,
+    Leader,
+    Line,
+    MText,
+    Point,
+    Polyline,
+    Spline,
+    Text,
     Viewport,
 )
 from ..core.model.entities import AttributeDefinition
 from .framework import (
-    CommandContext, GetAngle, GetDistance, GetEntity, GetNumber, GetPoint, GetSelection, Keyword, command, kw,
+    CommandContext,
+    EmptyPick,
+    GetAngle,
+    GetDistance,
+    GetEntity,
+    GetNumber,
+    GetPoint,
+    GetSelection,
+    Keyword,
+    command,
+    kw,
 )
 
 PREVIEW_LIMIT = 300
@@ -281,66 +316,172 @@ def _safe(items):
 
 
 # ------------------------------------------------------------------ trim / extend
-@command("TRIM", label="Trim", aliases=("TR",), group="Modify",
-         description="Cut off the part of an object that sticks past other objects. Click the part to remove.",
-         keywords=("cut", "clip", "remove part"))
-def trim_cmd(ctx: CommandContext):
-    history = []
+def _trim_at(ctx: CommandContext, e: Entity, pick) -> tuple | None:
+    """Trim e at pick. Returns an undo record (removed entity, added handles) or None."""
+    g = ctx.doc.geometry(e)
+    try:
+        result = trim(e, cutting_prims(ctx, e.handle, g.bbox), pick)
+    except EditError as exc:
+        ctx.echo(str(exc))
+        return None
+    ctx.doc.delete(e.handle)
+    added = []
+    if result is not None:
+        for piece in result:
+            added.append(ctx.doc.add(piece.with_props(handle=0)).handle)
+    ctx.doc.flush()              # keep the spatial index current for the next pick in this command
+    return (e, added)
+
+
+def _extend_at(ctx: CommandContext, e: Entity, pick, quiet: bool = False) -> tuple | None:
+    try:
+        new = extend(e, cutting_prims(ctx, e.handle, _big_box(ctx)), pick)
+    except EditError as exc:
+        if not quiet:
+            ctx.echo(str(exc))
+        return None
+    if new is None:
+        if not quiet:
+            ctx.echo("There's nothing in that direction to extend to.")
+        return None
+    ctx.doc.replace(new)
+    ctx.doc.flush()
+    return (e, [e.handle])
+
+
+def fence_hits(ctx: CommandContext, fence: list) -> list[tuple[int, tuple]]:
+    """(handle, point) for every place the fence crosses an editable, visible object, in fence order."""
+    out = []
+    for a, b in zip(fence, fence[1:]):
+        seg = Seg(a, b)
+        box = (min(a[0], b[0]), min(a[1], b[1]), max(a[0], b[0]), max(a[1], b[1]))
+        found = []
+        for h in ctx.index.query(box):
+            e = ctx.doc.get(h)
+            if e is None or not ctx.doc.is_visible(e) or ctx.doc.is_locked(e) or e.TYPE in ("hatch", "dimension"):
+                continue
+            for prim in ctx.doc.geometry(e).prims(snappable_only=True):
+                for p in intersect(seg, prim):
+                    found.append((dist(a, p), h, p))
+        found.sort(key=lambda t: t[0])
+        out.extend((h, p) for _, h, p in found)
+    return out
+
+
+def _crossing_fence(rect) -> list:
+    x0, y0, x1, y1 = rect
+    return [(x0, y0), (x1, y0), (x1, y1), (x0, y1), (x0, y0)]
+
+
+def _inside_rect(ctx, rect) -> list[tuple[int, tuple]]:
+    """Objects entirely inside the box (nothing to cut them at): pick them at their midpoint."""
+    out = []
+    for h in ctx.index.select_window(rect, crossing=False):
+        e = ctx.doc.get(h)
+        if e is None or ctx.doc.is_locked(e) or e.TYPE in ("hatch", "dimension"):
+            continue
+        prims = ctx.doc.geometry(e).prims(snappable_only=True)
+        if prims:
+            out.append((h, prims[0].mid))
+    return out
+
+
+def _gather_points(ctx: CommandContext, mode: str, start):
+    """Fence or crossing input starting at `start`. Yields requests; returns the pick list."""
+    if mode == "Crossing":
+        corner = yield GetPoint("Specify opposite corner", base=start, rubber="rect")
+        rect = (min(start[0], corner[0]), min(start[1], corner[1]), max(start[0], corner[0]), max(start[1], corner[1]))
+        return fence_hits(ctx, _crossing_fence(rect)) + _inside_rect(ctx, rect)
+    pts = [start]
     while True:
-        r = yield GetEntity("Select object to trim", keywords=kw("Undo"), allow_none=True)
+        p = yield GetPoint("Specify next fence point (Enter to finish)", base=pts[-1], allow_none=True)
+        if p is None:
+            break
+        pts.append(p)
+    return fence_hits(ctx, pts) if len(pts) > 1 else []
+
+
+def _apply_many(ctx: CommandContext, hits, extend_mode: bool, history: list) -> int:
+    """Trim (or extend) every object at each hit point. Pieces created by earlier cuts are found again by
+    looking up what is under each point now."""
+    n = 0
+    tol = max(1e-6, ctx.view.pick_tolerance() * 1e-3)
+    for h, p in hits:
+        e = ctx.doc.get(h)
+        if e is None or ctx.doc.geometry(e).bbox is None or min(pr.distance_to(p) for pr in ctx.doc.geometry(e).prims()) > tol:
+            e = next((x for x in ctx.index.near(p, tol) if not ctx.doc.is_locked(x) and x.TYPE not in ("hatch", "dimension")), None)
+        if e is None:
+            continue
+        rec = _extend_at(ctx, e, p, quiet=True) if extend_mode else _trim_at(ctx, e, p)
+        if rec is not None:
+            history.append(rec)
+            n += 1
+    return n
+
+
+def _undo_last(ctx: CommandContext, history: list) -> None:
+    if not history:
+        ctx.echo("Nothing to undo.")
+        return
+    removed, added = history.pop()
+    for h in added:
+        if ctx.doc.get(h):
+            ctx.doc.delete(h)
+    ctx.doc.add(removed)
+    ctx.doc.flush()
+
+
+def _trim_extend(ctx: CommandContext, extending: bool):
+    """Shared loop: click to trim (extend); Shift-click does the other one; click empty space for a fence
+    (or a crossing box when Crossing is chosen); Fence/Crossing keywords switch the empty-click mode."""
+    history: list = []
+    mode = ctx.memory.get("trim_mode", "Fence")
+    verb, other = ("extend", "trim") if extending else ("trim", "extend")
+    while True:
+        r = yield GetEntity(f"Select object to {verb} or Shift-select to {other} (click empty space: {mode.lower()})",
+                            keywords=kw("Fence", "Crossing", "Undo"), allow_none=True, empty_ok=True)
         if r is None:
             return
         if r == "Undo":
-            if not history:
-                ctx.echo("Nothing to undo.")
-                continue
-            removed, added = history.pop()
-            for h in added:
-                if ctx.doc.get(h):
-                    ctx.doc.delete(h)
-            ctx.doc.add(removed)
+            _undo_last(ctx, history)
+            continue
+        if r in ("Fence", "Crossing"):
+            mode = r
+            ctx.memory["trim_mode"] = mode
+            start = yield GetPoint(f"Specify first {'fence point' if mode == 'Fence' else 'corner'}")
+            r = EmptyPick(start)
+        do_extend = extending != bool(ctx.shift)
+        if isinstance(r, EmptyPick):
+            hits = yield from _gather_points(ctx, mode, r.point)
+            n = _apply_many(ctx, hits, do_extend, history)
+            if not n:
+                ctx.echo("Nothing was crossed." if not hits else f"Nothing could be {'extended' if do_extend else 'trimmed'}.")
             continue
         e, pick = r
         if ctx.doc.is_locked(e):
             ctx.echo("That object is on a locked layer.")
             continue
-        g = ctx.doc.geometry(e)
-        try:
-            result = trim(e, cutting_prims(ctx, e.handle, g.bbox), pick)
-        except EditError as exc:
-            ctx.echo(str(exc))
-            continue
-        ctx.doc.delete(e.handle)
-        added = []
-        if result is None:
-            ctx.echo("Nothing crosses it, so the whole object was removed.")
-        else:
-            for piece in result:
-                added.append(ctx.doc.add(piece.with_props(handle=0)).handle)
-        history.append((e, added))
+        rec = _extend_at(ctx, e, pick) if do_extend else _trim_at(ctx, e, pick)
+        if rec is not None:
+            history.append(rec)
+            if not do_extend and not rec[1]:
+                ctx.echo("Nothing crosses it, so the whole object was removed.")
+
+
+@command("TRIM", label="Trim", aliases=("TR",), group="Modify",
+         description="Cut off the parts of objects that stick past other objects. Click a part to remove it, "
+                     "or click empty space and drag a fence across several. Shift-click extends instead.",
+         keywords=("cut", "clip", "remove part", "fence"))
+def trim_cmd(ctx: CommandContext):
+    yield from _trim_extend(ctx, extending=False)
 
 
 @command("EXTEND", label="Extend", aliases=("EX",), group="Modify",
-         description="Lengthen a line or arc until it reaches another object. Click near the end to extend.",
-         keywords=("lengthen", "stretch to", "reach"))
+         description="Lengthen lines and arcs until they reach other objects. Click near the end to extend, "
+                     "or draw a fence across several. Shift-click trims instead.",
+         keywords=("lengthen", "stretch to", "reach", "fence"))
 def extend_cmd(ctx: CommandContext):
-    while True:
-        r = yield GetEntity("Select object to extend", allow_none=True)
-        if r is None:
-            return
-        e, pick = r
-        if ctx.doc.is_locked(e):
-            ctx.echo("That object is on a locked layer.")
-            continue
-        try:
-            new = extend(e, cutting_prims(ctx, e.handle, _big_box(ctx)), pick)
-        except EditError as exc:
-            ctx.echo(str(exc))
-            continue
-        if new is None:
-            ctx.echo("There's nothing in that direction to extend to.")
-            continue
-        ctx.doc.replace(new)
+    yield from _trim_extend(ctx, extending=True)
 
 
 # ------------------------------------------------------------------ fillet / chamfer
@@ -563,7 +704,7 @@ def _inside(p, rect) -> bool:
 
 
 def stretch_entity(e: Entity, rect, d) -> Entity | None:
-    mv = lambda p: (p[0] + d[0], p[1] + d[1]) if _inside(p, rect) else p   # noqa: E731
+    mv = lambda p: (p[0] + d[0], p[1] + d[1]) if _inside(p, rect) else p
     if isinstance(e, Line):
         return replace(e, p1=mv(e.p1), p2=mv(e.p2))
     if isinstance(e, Polyline):

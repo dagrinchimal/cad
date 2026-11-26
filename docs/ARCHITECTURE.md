@@ -155,6 +155,20 @@ Document
 
 ---
 
+### 7a. Associativity and direct value editing
+
+- `core/points.py` names every grippable point (`p1`, `v3`, `center`, …). Grips, dimension
+  references and the constraint solver all use these names.
+- Dimensions store `refs` (which object point each measured point comes from), hatches store
+  `sources` and the clicked `seed`, and `ArrayEntity` stores its `sources` plus the array rule
+  (copies are computed, never stored).
+- `core/associative.py` runs as the last pre-commit hook of every transaction: anything attached to
+  a changed object is rebuilt in the same undo step. If a rebuild is impossible (boundary opened,
+  object erased) the item keeps its last shape and drops the link.
+- `core/dimedit.py` lists the values shown when one object is selected (temporary lengths/radii plus
+  attached dimensions) and applies a typed value by moving geometry; the associativity hook then
+  updates everything else.
+
 ## 8. 3D modeling (direct, no history)
 
 - Sketch on a plane (world, UCS, or a planar face) → closed profiles → extrude, revolve, sweep, loft → solids.

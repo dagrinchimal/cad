@@ -13,7 +13,7 @@ from ..core.model import Document, Header, Layer, Linetype, entity_from_dict, en
 from ..core.model.tables import BlockDefinition, DimStyle, Group, Layout
 
 FORMAT_NAME = "cadz"
-FORMAT_VERSION = (1, 1, 0)   # 1.1: blocks, dimstyles, groups, layouts, constraints, new entity types
+FORMAT_VERSION = (1, 2, 0)   # 1.1: blocks, dimstyles, groups, layouts, constraints, new types; 1.2: associativity, arrays
 KNOWN_MEMBERS = {"manifest.json", "document.json", "thumbnail.png"}
 
 

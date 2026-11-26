@@ -112,6 +112,18 @@ Every entity may also have `space`: omitted for model space, otherwise the name 
 New header keys: `text_height`, `current_dimstyle`, `hatch_pattern`, `hatch_scale`, `hatch_angle`.
 Version 1.0 files open unchanged (all additions have defaults).
 
+### Added in 1.2 (associativity)
+
+| Where | Keys |
+|---|---|
+| `dimension` | `refs: [[handle, part], …]` — what `p1`, `p2`, `p3` are attached to (`[0, ""]` = not attached). Parts are named points (`p1`, `p2`, `mid` on lines; `v3` = polyline vertex 3; `center`, `start`, `end`…, see `core/points.py`). Radius/diameter dimensions use `[[circle, "curve"]]` |
+| `hatch` | `sources` (handles of the boundary objects), `seed` (the point clicked inside, or `null` for a hatch made from selected objects) |
+| `array` (new type) | `sources`, `kind` (`rect`/`polar`), `rows`, `cols`, `row_vec`, `col_vec`, `center`, `count`, `fill_angle`, `rotate_items`, `placement` (a 2×3 affine matrix applied to every copy). The copies are not stored: they are recomputed from the source objects |
+
+When an attached object changes, the program updates the dimension, hatch or array in the same
+undo step. Programs that don't understand associativity can ignore these keys: the stored points
+and loops are always current. Version 1.0 and 1.1 files open unchanged.
+
 ## Compatibility rules
 
 1. **Older files always open.** Each format version bump ships a migration in

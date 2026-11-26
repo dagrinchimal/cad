@@ -176,3 +176,10 @@ def test_revit_round_trip():
     for _ in range(300):
         mm = rng.randint(-50000, 50000) / 16 * IN
         assert parse_length(format_length(mm, REVIT), REVIT) == pytest.approx(mm, abs=1e-9)
+
+
+def test_format_area():
+    from cad.core.units import format_area
+    assert format_area(154 * 144 * 25.4 ** 2, UnitSettings(mode=UnitMode.ARCHITECTURAL)) == "154.00 sq ft"
+    assert format_area(12 * 25.4 ** 2, UnitSettings(mode=UnitMode.FRACTIONAL)) == "12.00 sq in"
+    assert format_area(12e6, UnitSettings(mode=UnitMode.MM)) == "12.000 m²"

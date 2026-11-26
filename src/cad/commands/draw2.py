@@ -4,6 +4,7 @@ from __future__ import annotations
 import math
 from dataclasses import replace
 
+from ..core.units import format_area
 from ..core.geom2d import Arc as ArcPrim
 from ..core.geom2d.fill import loop_area
 from ..core.geom2d.regions import find_boundary
@@ -351,7 +352,7 @@ def hatch_cmd(ctx: CommandContext):
     hatch = Hatch(loops=tuple(loops_all), pattern=pattern, pattern_scale=scale, pattern_angle=angle,
                   sources=frozenset(sources) if assoc else frozenset(), seed=seeds[0] if (assoc and seeds) else None)
     ctx.doc.add(hatch, use_current_props=True)
-    ctx.echo(f"Hatch created, area = {ctx.fmt(math.sqrt(hatch.area()))} squared.")
+    ctx.echo(f"Hatch created, area = {format_area(hatch.area(), ctx.units)}.")
 
 
 @command("BOUNDARY", label="Boundary", aliases=("BO",), group="Draw",

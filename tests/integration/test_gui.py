@@ -338,3 +338,71 @@ def test_constraint_symbols_drawn(qtbot, win):
     win.controller.zoom_extents()
     img = win.canvas.grab_image()
     assert not img.isNull()
+
+
+def _select(qtbot, win, p):
+    click(qtbot, win, p)
+    win.canvas.repaint()                  # paints grips and the clickable values
+
+
+def test_drag_grip_with_two_clicks(qtbot, win):
+    with win.doc.transaction("seed"):
+        a = win.doc.add(Line(p1=(0, 0), p2=(100, 0)))
+        b = win.doc.add(Line(p1=(100, 0), p2=(100, 60)))
+    win.controller.zoom_extents()
+    click(qtbot, win, (50, 0))
+    click(qtbot, win, (100, 30))
+    click(qtbot, win, (100, 0))           # the shared corner grip
+    assert win.runner.active.name == "GRIPEDIT"
+    type_line(qtbot, win, "120,10")
+    assert win.doc.get(a.handle).p2 == pytest.approx((120, 10))
+    assert win.doc.get(b.handle).p1 == pytest.approx((120, 10))
+
+
+def test_click_the_length_and_type_feet_inches(qtbot, win):
+    from dataclasses import replace
+    from cad.core.units import UnitSettings
+    with win.doc.transaction("seed"):
+        win.doc.set_header(replace(win.doc.header, units=UnitSettings(mode=UnitMode.ARCHITECTURAL)))
+        ln = win.doc.add(Line(p1=(0, 0), p2=(3048, 0)))
+    win.controller.zoom_extents()
+    win.controller.zoom_factor(0.8)
+    _select(qtbot, win, (1500, 0))
+    boxes = win.controller.value_boxes
+    assert boxes and boxes[0][1].kind == "length"
+    rect = boxes[0][0]
+    qtbot.mouseClick(win.canvas, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier,
+                     QPoint(round(rect.center().x()), round(rect.center().y())))
+    ed = win.controller.value_editor
+    assert ed is not None and ed.isVisible() and ed.text() == "10'-0\""
+    ed.selectAll()
+    qtbot.keyClicks(ed, "3 4-1/2")
+    qtbot.keyClick(ed, Qt.Key.Key_Return)
+    assert win.doc.get(ln.handle).p2[0] == pytest.approx((36 + 4.5) * 25.4)
+    assert win.controller.value_editor is None
+    win.doc.undo()
+    assert win.doc.get(ln.handle).p2[0] == pytest.approx(3048)
+
+
+def test_fence_trim_with_mouse_and_shift_extend(qtbot, win):
+    with win.doc.transaction("seed"):
+        for y in (0, 10, 20):
+            win.doc.add(Line(p1=(0, y), p2=(100, y)))
+        win.doc.add(Line(p1=(30, -10), p2=(30, 30)))
+        win.doc.add(Line(p1=(70, -10), p2=(70, 30)))
+        short = win.doc.add(Line(p1=(0, 40), p2=(20, 40)))
+        win.doc.add(Line(p1=(-10, 50), p2=(100, 50)))
+    win.controller.zoom_extents()
+    win.run_command("TRIM")
+    click(qtbot, win, (50, 25))           # empty space starts a fence
+    click(qtbot, win, (50, -5))
+    qtbot.keyClick(win.canvas, Qt.Key.Key_Return)
+    horiz = [e for e in win.doc.entities.values() if isinstance(e, Line) and e.p1[1] == e.p2[1] and e.p1[1] <= 20]
+    assert len(horiz) == 6
+    v = Line(p1=(10, 30), p2=(10, 45))
+    with win.doc.transaction("v"):
+        v = win.doc.add(v)
+    win.run_command("TRIM")
+    click(qtbot, win, (10, 44), Qt.KeyboardModifier.ShiftModifier)      # Shift: extend instead
+    qtbot.keyClick(win.canvas, Qt.Key.Key_Return)
+    assert win.doc.get(v.handle).p2 == pytest.approx((10, 50))

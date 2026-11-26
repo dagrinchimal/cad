@@ -5,24 +5,58 @@ import math
 import time
 
 from PySide6.QtCore import QObject, QPoint, QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QBrush, QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPen, QPolygonF
+from PySide6.QtGui import (
+    QBrush,
+    QColor,
+    QFont,
+    QFontMetrics,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPolygonF,
+)
+from PySide6.QtWidgets import QLineEdit
 
-from ..commands import CommandRunner, GetAngle, GetDistance, GetEntity, GetNumber, GetPoint, GetSelection
+from ..commands import (
+    CommandRunner,
+    GetAngle,
+    GetDistance,
+    GetEntity,
+    GetNumber,
+    GetPoint,
+    GetSelection,
+)
+from ..commands.grips import grips_at
+from ..core.dimedit import (
+    EditableValue,
+    EditError,
+    apply_value,
+    editable_values,
+    format_value,
+    parse_value,
+)
 from ..core.geom2d import Vec
 from ..core.geom2d.vec import angle_of, dist, sub
-from ..core.model import Document, Line, Polyline
+from ..core.model import MODEL_SPACE, Document, Line, Polyline, Viewport
+from ..core.points import named_points
 from ..core.snaps import TRACKABLE, Osnap, SnapEngine, SnapResult, SnapSettings
 from ..core.spatial import SpatialIndex
 from ..core.units import format_angle, format_length
-from ..core.model import MODEL_SPACE, Viewport
 from ..render.canvas_base import ViewportView
 from ..render.scene import (
-    SceneBuilder, StyleOptions, grid_instances, rect_tris, solid_color_instances, solid_color_tris,
+    SceneBuilder,
+    StyleOptions,
+    grid_instances,
+    rect_tris,
+    solid_color_instances,
+    solid_color_tris,
 )
 from ..render.view import ViewState
 from .theme import colors
 
 PICKBOX_PX = 5
+GRIP_PX = 6            # grips react within this many pixels
+VALUE_OFFSET_PX = 22   # temporary dimensions sit this far from the object
 
 
 def wants_point(req) -> bool:
@@ -69,6 +103,10 @@ class CanvasController(QObject):
         self.view_history: list[ViewState] = []
         self._last_history_push = 0.0
         self._acquire_target: tuple[Vec, Osnap] | None = None
+        self.value_boxes: list[tuple[QRectF, EditableValue]] = []   # clickable numbers (Revit-style)
+        self.hot_grip: Vec | None = None
+        self.value_editor: QLineEdit | None = None
+        self._editing_value: EditableValue | None = None
 
         self._rebuild_timer = QTimer(self, singleShot=True, interval=0)
         self._rebuild_timer.timeout.connect(self.rebuild_scene)
@@ -125,6 +163,7 @@ class CanvasController(QObject):
 
     def _on_runner_changed(self) -> None:
         if not self.runner.is_active:
+            self.hot_grip = None
             self.engine.clear_acquired()
             self.pending_sel.clear()
             self.snap = None
@@ -479,6 +518,11 @@ class CanvasController(QObject):
             self.canvas.update()
             return
         self._recompute_at_cursor()
+        if self.runner.request is None and self.runner.ctx.selection:
+            found = self.grip_targets_at(pos)
+            self.hot_grip = found[0] if found else None
+        elif not self.runner.is_active:
+            self.hot_grip = None
         self.canvas.update()
 
     def on_mouse_press(self, ev) -> None:
@@ -499,6 +543,7 @@ class CanvasController(QObject):
             self.runner.submit_point(self.current_point())
             self._after_input()
             return
+        self.runner.ctx.shift = bool(ev.modifiers() & Qt.KeyboardModifier.ShiftModifier)
         if isinstance(req, GetEntity):
             self.runner.submit_point(self.view.to_model(pos.x(), pos.y()))
             self._after_input()
@@ -507,6 +552,13 @@ class CanvasController(QObject):
         if self.window_start is not None:
             self._finish_window(pos, ev.modifiers())
             return
+        if req is None and self.runner.ctx.selection:
+            for rect, target in self.value_boxes:
+                if rect.contains(pos):
+                    self.begin_value_edit(target, rect)
+                    return
+            if self.start_grip_edit(pos):
+                return
         self.cursor_model = self.view.to_model(pos.x(), pos.y())
         hit = self.index.pick(self.cursor_model, PICKBOX_PX * self.view.pixel)
         if hit is not None:
@@ -612,6 +664,7 @@ class CanvasController(QObject):
         self.update_highlight()
 
     def _selection_updated(self) -> None:
+        self.cancel_value_edit()
         self.update_highlight()
         self.selection_changed.emit()
 
@@ -775,20 +828,161 @@ class CanvasController(QObject):
                     break
 
     def _paint_grips(self, p: QPainter) -> None:
+        self.value_boxes = []
         sel = self.runner.ctx.selection
         if not sel or self.runner.is_active:
             return
         p.setPen(QPen(QColor(255, 255, 255) if self.dark else QColor(0, 0, 0), 1))
-        p.setBrush(QColor(40, 120, 255))
         for i, h in enumerate(sel):
             if i >= MAX_GRIP_ENTITIES:
                 break
             e = self.doc.entities.get(h)
             if e is None:
                 continue
-            for g in self.doc.geometry(e).grips:
+            for _, g in named_points(e):
                 x, y = self.view.to_screen(g)
+                hot = self.hot_grip is not None and dist(g, self.hot_grip) < 1e-9
+                p.setBrush(QColor(255, 60, 60) if hot else QColor(40, 120, 255))
                 p.drawRect(QRectF(x - 3.5, y - 3.5, 7, 7))
+        if len(sel) == 1:
+            e = self.doc.entities.get(next(iter(sel)))
+            if e is not None and e.space == self.space:
+                self._paint_values(p, e)
+
+    # ------------------------------------------------------------ grips (click a grip, then the new point)
+    def grip_targets_at(self, pos) -> tuple[Vec, list] | None:
+        pt = self.view.to_model(pos.x(), pos.y())
+        targets = grips_at(self.doc, list(self.runner.ctx.selection)[:MAX_GRIP_ENTITIES], pt, GRIP_PX * self.view.pixel)
+        if not targets:
+            return None
+        from ..core.points import point_of
+        h, part = targets[0]
+        return point_of(self.doc.entities[h], part), targets
+
+    def start_grip_edit(self, pos) -> bool:
+        found = self.grip_targets_at(pos)
+        if found is None:
+            return False
+        base, targets = found
+        self.runner.ctx.memory["grip"] = (base, targets)
+        self.hot_grip = base
+        self.runner.ctx.last_point = base
+        self.runner.run("GRIPEDIT")
+        self._after_input()
+        return True
+
+    # ------------------------------------------------------------ Revit-style values
+    def _value_text_color(self) -> QColor:
+        return QColor(120, 190, 255) if self.dark else QColor(0, 90, 200)
+
+    def _paint_values(self, p: QPainter, e) -> None:
+        v = self.view
+        try:
+            targets = editable_values(self.doc, e)
+        except Exception:     # never let an overlay break painting
+            return
+        if len(targets) > 40:
+            targets = [t for t in targets if t.kind == "dim"] + [t for t in targets if t.kind != "dim"][:40]
+        f = QFont(p.font())
+        p.setFont(f)
+        fm = QFontMetrics(f)
+        col = self._value_text_color()
+        bg = QColor(30, 34, 40, 225) if self.dark else QColor(255, 255, 255, 230)
+        for t in targets:
+            text = format_value(self.doc, t)
+            if t.kind == "dim":
+                cx, cy = v.to_screen(t.label_at)
+            elif t.kind == "radius":
+                a, b = v.to_screen(t.a), v.to_screen(t.b)
+                p.setPen(QPen(col, 1, Qt.PenStyle.DashLine))
+                p.drawLine(QPointF(*a), QPointF(*b))
+                cx, cy = (a[0] + b[0]) / 2, (a[1] + b[1]) / 2
+                text = "R " + text
+            else:
+                a, b = v.to_screen(t.a), v.to_screen(t.b)
+                dx, dy = b[0] - a[0], b[1] - a[1]
+                L = math.hypot(dx, dy)
+                if L < fm.horizontalAdvance(text) + 16:
+                    continue                      # too small on screen to label
+                nx, ny = -dy / L * VALUE_OFFSET_PX, dx / L * VALUE_OFFSET_PX
+                a2, b2 = (a[0] + nx, a[1] + ny), (b[0] + nx, b[1] + ny)
+                p.setPen(QPen(col, 1))
+                p.drawLine(QPointF(*a), QPointF(*a2))
+                p.drawLine(QPointF(*b), QPointF(*b2))
+                p.drawLine(QPointF(*a2), QPointF(*b2))
+                for q in (a2, b2):                # small slash ticks, like architectural dimensions
+                    p.drawLine(QPointF(q[0] - 4, q[1] + 4), QPointF(q[0] + 4, q[1] - 4))
+                cx, cy = (a2[0] + b2[0]) / 2, (a2[1] + b2[1]) / 2
+            w, h = fm.horizontalAdvance(text) + 10, fm.height() + 4
+            rect = QRectF(cx - w / 2, cy - h / 2, w, h)
+            p.setPen(QPen(col, 1))
+            p.setBrush(bg)
+            p.drawRoundedRect(rect, 3, 3)
+            p.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            self.value_boxes.append((rect, t))
+
+    def begin_value_edit(self, target: EditableValue, rect: QRectF) -> None:
+        self.cancel_value_edit()
+        ed = QLineEdit(self.canvas)
+        ed.setObjectName("valueEditor")
+        ed.setText(format_value(self.doc, target))
+        ed.selectAll()
+        ed.setToolTip("Type the value you want and press Enter (Esc cancels). Any unit format works, "
+                      "e.g. 3 4-1/2 for 3'-4 1/2\", 1500mm, 2.5\".")
+        w = max(rect.width() + 40, 110)
+        ed.setGeometry(int(rect.center().x() - w / 2), int(rect.center().y() - 13), int(w), 26)
+        ed.returnPressed.connect(self._commit_value_edit)
+        ed.installEventFilter(self)
+        self.value_editor = ed
+        self._editing_value = target
+        ed.show()
+        ed.setFocus()
+
+    def eventFilter(self, obj, ev) -> bool:   # Esc / focus loss on the inline value editor
+        from PySide6.QtCore import QEvent
+        if obj is self.value_editor:
+            if ev.type() == QEvent.Type.KeyPress and ev.key() == Qt.Key.Key_Escape:
+                self.cancel_value_edit()
+                return True
+            if ev.type() == QEvent.Type.FocusOut:
+                QTimer.singleShot(0, self.cancel_value_edit)
+        return False
+
+    def cancel_value_edit(self) -> None:
+        ed, self.value_editor, self._editing_value = self.value_editor, None, None
+        if ed is not None:
+            ed.removeEventFilter(self)
+            ed.hide()
+            ed.deleteLater()
+            self.canvas.setFocus()
+            self.canvas.update()
+
+    def _commit_value_edit(self) -> None:
+        ed, target = self.value_editor, self._editing_value
+        if ed is None or target is None:
+            return
+        msg = self.set_value(target, ed.text())
+        if msg:
+            self.runner.ctx.echo(msg)
+            ed.selectAll()
+            return
+        self.cancel_value_edit()
+
+    def set_value(self, target: EditableValue, text: str) -> str | None:
+        """Apply a typed value. Returns an error message, or None when done."""
+        sel = self.runner.ctx.selection
+        selected = next(iter(sel)) if len(sel) == 1 else None
+        try:
+            value = parse_value(self.doc, target, text)
+            with self.doc.transaction("Change dimension value"):
+                apply_value(self.doc, target, value, selected=selected)
+        except EditError as exc:
+            return str(exc)
+        except Exception as exc:          # e.g. a constraint conflict refused the change
+            return f"Couldn't apply that value: {exc}"
+        self.update_highlight()
+        return None
 
     def _paint_marker(self, p: QPainter, mode: Osnap, at: tuple[float, float]) -> None:
         x, y = at
