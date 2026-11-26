@@ -169,6 +169,7 @@ class Document:
         self.manifest_extra: dict = {}     # unknown manifest keys from newer files
         self.extra_members: dict[str, bytes] = {}   # unknown files inside the .cadz zip
         self.path: str | None = None
+        self.save_format: str | None = None     # plugin id when Ctrl+S writes DXF/DWG, else .cadz
         self.current_space: str = MODEL_SPACE     # where new objects go (UI state, not saved)
 
         self._tx: Transaction | None = None

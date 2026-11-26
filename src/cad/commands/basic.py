@@ -144,6 +144,18 @@ _ui_command("NEW", "New", "Start a new drawing.", shortcut="Ctrl+N", keywords=("
 _ui_command("OPEN", "Open", "Open a saved drawing.", shortcut="Ctrl+O", keywords=("load", "file"))
 _ui_command("QSAVE", "Save", "Save the drawing.", aliases=("SAVE",), shortcut="Ctrl+S", keywords=("store",))
 _ui_command("SAVEAS", "Save As", "Save the drawing under a new name.", shortcut="Ctrl+Shift+S")
+_ui_command("EXPORT", "Export", "Save a copy in another format: DXF, DWG, PDF, SVG, PNG/JPG/TIFF or HPGL.",
+            aliases=("EXP",), group="Output", keywords=("dxf", "dwg", "pdf", "svg", "png", "jpg", "save as other format"))
+_ui_command("EXPORTPDF", "Export PDF", "Save the model or layouts as a true-scale vector PDF.",
+            group="Output", keywords=("pdf", "publish"))
+_ui_command("DXFOUT", "Export DXF", "Save a copy as an AutoCAD DXF file.", group="Output", keywords=("dxf", "autocad"))
+_ui_command("IMPORT", "Import", "Bring the objects of a DXF, DWG or SVG file into this drawing.",
+            aliases=("IMP",), group="Output", keywords=("insert file", "dxf", "dwg", "svg", "bring in"))
+_ui_command("DXFIN", "Open DXF", "Open an AutoCAD DXF file.", group="Output", keywords=("dxf", "autocad"))
+_ui_command("PLOT", "Plot", "Print the model or a layout at a scale, or save it as a PDF, with a preview.",
+            aliases=("PRINT",), shortcut="Ctrl+P", group="Output", keywords=("print", "printer", "paper", "pdf"))
+_ui_command("BATCHEXPORT", "Batch Export", "Export the drawing to several formats at once.",
+            aliases=("PUBLISH",), group="Output", keywords=("several formats", "publish", "all formats"))
 _ui_command("RECOVER", "Recover", "Open drawings saved automatically before a crash.",
             keywords=("crash", "autosave", "restore"))
 _ui_command("EXIT", "Exit", "Close the program.", aliases=("QUIT",), keywords=("close", "quit"))

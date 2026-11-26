@@ -87,3 +87,55 @@ class QtTextEngine:
         bottom = y0 - (len(lines) - 1) * lh - 0.3 * run.height
         box = [m.apply(p) for p in ((x_min, bottom), (x_max, bottom), (x_max, top), (x_min, top))]
         return TextLayout([], box, lines, triangles)
+
+    def outlines(self, run: TextRun) -> list[np.ndarray]:
+        """Glyph outline loops in drawing coordinates (fill even-odd). Used for plotting, where real
+        outlines give cleaner PDFs than triangles."""
+        font_name = run.font or "Arial"
+        _, _, cap = _font(font_name)
+        s = run.height / cap
+        sx = s * run.width_factor
+
+        def measure(t: str) -> float:
+            return _advance(font_name, t) * sx
+
+        lines = wrap_lines(run.text, run.wrap_width, measure) if run.multiline else [run.text.replace("\n", " ")]
+        lh = run.height * 1.667 * run.line_spacing
+        widths = [measure(t) for t in lines]
+        xs, y0 = block_offset(run, widths, lh)
+        m = run.transform()
+        out: list[np.ndarray] = []
+        for i, (t, x) in enumerate(zip(lines, xs)):
+            if not t.strip():
+                continue
+            yb = y0 - i * lh
+            scale_line = measure(t) / max(sum(_glyph(font_name, ch)[1] for ch in t) * sx, 1e-12)
+            pen = 0.0
+            for ch in t:
+                if ch.strip():
+                    for lp in _outline(font_name, ch):
+                        local = np.column_stack(((lp[:, 0] + pen) * sx * scale_line + x, lp[:, 1] * s + yb))
+                        out.append(m.apply_array(local))
+                pen += _glyph(font_name, ch)[1]
+        return out
+
+
+def ensure_qt_text_engine() -> None:
+    """Use real font outlines even outside the main window (exports from scripts and tests).
+    Creates a hidden QGuiApplication if the process has none."""
+    import os
+    import sys
+
+    from PySide6.QtGui import QGuiApplication
+
+    from ..core.text import set_text_engine, text_engine
+    if QGuiApplication.instance() is None:
+        if sys.platform.startswith("linux") and not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+            os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        global _app_keepalive
+        _app_keepalive = QGuiApplication(sys.argv[:1])
+    if not isinstance(text_engine(), QtTextEngine):
+        set_text_engine(QtTextEngine())
+
+
+_app_keepalive = None

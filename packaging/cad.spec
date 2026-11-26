@@ -2,7 +2,8 @@
 # Build:  pyinstaller packaging/cad.spec --noconfirm
 from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules
 
-hidden = collect_submodules("glcontext") + collect_submodules("cad") + collect_submodules("rtree")
+hidden = (collect_submodules("glcontext") + collect_submodules("cad") + collect_submodules("rtree")
+          + collect_submodules("ezdxf") + ["svgelements", "PySide6.QtPrintSupport"])
 binaries = collect_dynamic_libs("rtree") + collect_dynamic_libs("glcontext")
 datas = collect_data_files("cad") + collect_data_files("ezdxf")
 

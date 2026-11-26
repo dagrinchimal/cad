@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 
 from .. import APP_NAME, FILE_EXTENSION
 from ..commands import REGISTRY, CommandContext, CommandRunner, GetDistance, GetPoint, GetSelection
-from ..core.model import Document, Layer
+from ..core.model import MODEL_SPACE, Document, Layer
 from ..core.spatial import SpatialIndex
 from ..core.units import UnitMode, UnitSettings
 from ..io import native
@@ -53,6 +53,8 @@ class MainWindow(QMainWindow):
         from ..render.text_qt import QtTextEngine
         set_text_engine(QtTextEngine())
         self.settings = settings or AppSettings()
+        self._load_plugins()
+        self.setAcceptDrops(True)
         self.dark = self.settings.dark_theme
         self.icons = IconProvider(self.dark)
         self.snap_cfg = self.settings.snap_settings()
@@ -125,6 +127,25 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self.canvas.setFocus)
 
     # ================================================================ setup
+    def _load_plugins(self) -> None:
+        """Built-in formats, plus any user plugins in the data folder's plugins/ subfolder."""
+        from ..plugins import registry
+        registry.load_builtins()
+        plugin_dir = data_dir() / "plugins"
+        try:
+            plugin_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
+        registry.load_folder(plugin_dir)
+        self.apply_converter_setting()
+
+    def apply_converter_setting(self) -> None:
+        from ..plugins import registry
+        try:
+            registry.get("dwg").converter_path = self.settings.get("exchange/oda_converter", "") or None
+        except Exception:                       # noqa: BLE001 - a user plugin may have replaced it
+            pass
+
     def _blank_document(self) -> Document:
         mode = self.settings.get("drawing/default_units", "mm")
         try:
@@ -148,6 +169,7 @@ class MainWindow(QMainWindow):
         self.a_open = act("Open…", "Ctrl+O", lambda: self.run_command("OPEN"))
         self.a_save = act("Save", "Ctrl+S", lambda: self.run_command("QSAVE"))
         self.a_saveas = act("Save As…", "Ctrl+Shift+S", lambda: self.run_command("SAVEAS"))
+        self.a_plot = act("Plot…", "Ctrl+P", lambda: self.run_command("PLOT"))
         self.a_undo = act("Undo", "Ctrl+Z", self.undo)
         self.a_redo = act("Redo", "Ctrl+Y", self.redo)
         act("Select all", "Ctrl+A", self.controller.select_all)
@@ -164,6 +186,11 @@ class MainWindow(QMainWindow):
             a = app_menu.addAction(self.icons.icon(c.icon), f"{c.label}\t{c.shortcut}")
             a.triggered.connect(lambda _=False, n=name: self.run_command(n))
         self.recent_menu = app_menu.addMenu("Open recent")
+        app_menu.addSeparator()
+        for name in ("IMPORT", "EXPORT", "BATCHEXPORT", "PLOT"):
+            c = REGISTRY.get(name)
+            a = app_menu.addAction(self.icons.icon(c.icon), f"{c.label}…" + (f"\t{c.shortcut}" if c.shortcut else ""))
+            a.triggered.connect(lambda _=False, n=name: self.run_command(n))
         app_menu.addSeparator()
         a = app_menu.addAction(self.icons.icon("recover"), "Recover autosaved drawings…")
         a.triggered.connect(lambda: self.run_command("RECOVER"))
@@ -218,6 +245,12 @@ class MainWindow(QMainWindow):
             Group("Layout", [Tool("LAYOUT", label="New\nLayout", then="N"), Tool("MVIEW", label="Viewport"),
                              Tool("PAGESETUP", label="Page\nSetup")]),
         ]
+        output = [
+            Group("Plot", [Tool("PLOT"), Tool("PAGESETUP", label="Page\nSetup")]),
+            Group("Export", [Tool("EXPORT"), S("EXPORTPDF", "PDF"), S("DXFOUT", "DXF"),
+                             Tool("BATCHEXPORT", label="Batch\nExport")]),
+            Group("Import", [Tool("IMPORT"), S("DXFIN", "Open DXF")]),
+        ]
         view = [
             Group("Navigate", [Tool("ZOOMEXTENTS", label="Zoom\nExtents", icon="zoomextents"),
                                Tool("ZOOMWINDOW", label="Zoom\nWindow", icon="zoomwindow"),
@@ -241,7 +274,7 @@ class MainWindow(QMainWindow):
             return w
         self.ribbon = Ribbon(REGISTRY, self.icons, [("Home", home), ("Annotate", annotate),
                                                     ("Parametric", parametric), ("Layout", layout_tab),
-                                                    ("View", view)], app_menu,
+                                                    ("Output", output), ("View", view)], app_menu,
                              special={"layer_combo": layer_widget})
         self.ribbon.tool_triggered.connect(self._ribbon_tool)
         self.setMenuWidget(self.ribbon)
@@ -380,6 +413,13 @@ class MainWindow(QMainWindow):
             "PROPERTIES": lambda: self.props_dock.setVisible(not self.props_dock.isVisible()),
         }
         handlers["PAGESETUP"] = self.page_setup_dialog
+        handlers["EXPORT"] = self.export_dialog
+        handlers["EXPORTPDF"] = lambda: self.export_dialog("pdf")
+        handlers["DXFOUT"] = lambda: self.export_dialog("dxf")
+        handlers["IMPORT"] = self.import_dialog
+        handlers["DXFIN"] = lambda: self.open_dialog(dxf_only=True)
+        handlers["PLOT"] = self.plot_dialog
+        handlers["BATCHEXPORT"] = self.batch_export_dialog
         handlers["PARAMETERS"] = self.parameters_dialog
         handlers["CONSTRAINTBAR"] = self.toggle_constraint_display
         handlers["DIMSTYLE"] = self.dimstyle_dialog
@@ -426,26 +466,67 @@ class MainWindow(QMainWindow):
         if self.maybe_save():
             self.set_document(self._blank_document())
 
-    def open_dialog(self) -> None:
+    def _start_dir(self) -> str:
+        return os.path.dirname(self.doc.path) if self.doc.path else str(self.settings.get("exchange/last_dir", Path.home()))
+
+    def open_dialog(self, dxf_only: bool = False) -> None:
         if not self.maybe_save():
             return
-        start = os.path.dirname(self.doc.path) if self.doc.path else str(Path.home())
-        path, _ = QFileDialog.getOpenFileName(self, "Open drawing", start, FILE_FILTER)
+        from .file_exchange import open_filter
+        flt = "AutoCAD DXF (*.dxf)" if dxf_only else open_filter()
+        path, _ = QFileDialog.getOpenFileName(self, "Open drawing", self._start_dir(), flt)
         if path:
             self.open_path(path)
 
     def open_path(self, path: str) -> bool:
+        """Open a .cadz drawing, or any importable file (DXF, DWG, SVG) as a new drawing."""
+        from ..plugins import PluginError, Report, registry
+        self.settings.set("exchange/last_dir", os.path.dirname(path))
+        if path.lower().endswith(FILE_EXTENSION):
+            try:
+                doc, warnings = native.load(path)
+            except Exception as exc:            # noqa: BLE001
+                QMessageBox.critical(self, "Can't open drawing", f"{path}\n\n{exc}")
+                return False
+            self.set_document(doc)
+            for w in warnings:
+                self.cmdline.append(f"Note: {w}")
+            self.settings.add_recent(path)
+            self.cmdline.append(f"Opened {path}")
+            return True
+        report = Report(title=f"Opened {os.path.basename(path)}")
         try:
-            doc, warnings = native.load(path)
-        except Exception as exc:            # noqa: BLE001
-            QMessageBox.critical(self, "Can't open drawing", f"{path}\n\n{exc}")
+            plugin = registry.for_path(path, "import")
+            ok, why = plugin.available()
+            if not ok:
+                raise PluginError(why)
+            from .file_exchange import remembered
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
+                doc = plugin.import_(path, remembered(self.settings, plugin.id, "import"), report)
+            finally:
+                QApplication.restoreOverrideCursor()
+        except PluginError as exc:
+            QMessageBox.warning(self, "Can't open file", f"{path}\n\n{exc}")
             return False
+        except Exception as exc:                # noqa: BLE001
+            QMessageBox.critical(self, "Can't open file", f"{path}\n\n{exc}")
+            return False
+        # an opened DXF/DWG saves back to the same file and format with Ctrl+S, like AutoCAD
+        doc.path = path if plugin.can_export and plugin.id in ("dxf", "dwg") else None
+        doc.save_format = plugin.id if doc.path else None
         self.set_document(doc)
-        for w in warnings:
-            self.cmdline.append(f"Note: {w}")
+        self.controller.zoom_extents()
         self.settings.add_recent(path)
-        self.cmdline.append(f"Opened {path}")
+        self._show_report(report)
         return True
+
+    def _show_report(self, report, title: str = "Report") -> None:
+        from .file_exchange import ReportDialog, report_needs_dialog
+        for line in report.summary().splitlines():
+            self.cmdline.append(line)
+        if report_needs_dialog(report) and not os.environ.get("CAD_NO_REPORT_DIALOGS"):
+            ReportDialog(title, report, self).exec()
 
     def save(self) -> bool:
         if not self.doc.path:
@@ -453,27 +534,201 @@ class MainWindow(QMainWindow):
         return self._save_to(self.doc.path)
 
     def save_as(self) -> bool:
-        start = self.doc.path or str(Path.home() / f"Drawing1{FILE_EXTENSION}")
-        path, _ = QFileDialog.getSaveFileName(self, "Save drawing as", start, FILE_FILTER)
+        from .file_exchange import save_filter
+        start = self.doc.path or os.path.join(self._start_dir(), f"Drawing1{FILE_EXTENSION}")
+        path, flt = QFileDialog.getSaveFileName(self, "Save drawing as", start, save_filter())
         if not path:
             return False
-        if not path.lower().endswith(FILE_EXTENSION):
-            path += FILE_EXTENSION
+        ext = os.path.splitext(path)[1].lower()
+        if ext not in (".dxf", ".dwg", FILE_EXTENSION):
+            ext = ".dxf" if "dxf" in flt.lower() else ".dwg" if "dwg" in flt.lower() else FILE_EXTENSION
+            path += ext
         return self._save_to(path)
 
     def _save_to(self, path: str) -> bool:
+        if not path.lower().endswith(FILE_EXTENSION):
+            return self._save_foreign(path)
         try:
             native.save(self.doc, path, thumbnail_png=self._thumbnail())
         except Exception as exc:            # noqa: BLE001
             QMessageBox.critical(self, "Save failed", f"Couldn't save to {path}\n\n{exc}")
             return False
         self.doc.path = path
+        self.doc.save_format = None
         self.doc.mark_saved()
         self.autosave.discard_copy()
         self.settings.add_recent(path)
         self.cmdline.append(f"Saved {path}")
         self._update_title()
         return True
+
+    def _save_foreign(self, path: str) -> bool:
+        """Save as DXF/DWG: warn once about what the format can't keep, then write it."""
+        from ..plugins import PluginError, Report, registry
+        from .file_exchange import remembered
+        try:
+            plugin = registry.for_path(path, "export")
+            ok, why = plugin.available()
+            if not ok:
+                raise PluginError(why)
+        except PluginError as exc:
+            QMessageBox.warning(self, "Can't save", str(exc))
+            return False
+        losses = plugin.losses(self.doc)
+        warned = getattr(self.doc, "_warned_losses", set())
+        if losses and (path, plugin.id) not in warned and not os.environ.get("CAD_NO_REPORT_DIALOGS"):
+            r = QMessageBox.question(
+                self, f"Save as {plugin.name}?",
+                f"{plugin.name} can't keep everything in this drawing:\n\n• " + "\n• ".join(losses) +
+                f"\n\nTo keep everything, also save it as {FILE_EXTENSION}. Save as {plugin.name} anyway?",
+                QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Cancel)
+            if r != QMessageBox.StandardButton.Save:
+                return False
+        warned.add((path, plugin.id))
+        self.doc._warned_losses = warned
+        report = Report(title=f"Saved {os.path.basename(path)}")
+        try:
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
+                plugin.export(self.doc, path, remembered(self.settings, plugin.id), report)
+            finally:
+                QApplication.restoreOverrideCursor()
+        except Exception as exc:                # noqa: BLE001
+            QMessageBox.critical(self, "Save failed", f"Couldn't save to {path}\n\n{exc}")
+            return False
+        self.doc.path = path
+        self.doc.save_format = plugin.id
+        self.doc.mark_saved()
+        self.autosave.discard_copy()
+        self.settings.add_recent(path)
+        self.cmdline.append(f"Saved {path} ({plugin.name})")
+        self._update_title()
+        return True
+
+    # ================================================================ import / export / plot
+    def export_dialog(self, preselect: str | None = None) -> None:
+        from ..plugins import PluginError, Report
+        from .file_exchange import ExportDialog
+        base = os.path.splitext(self.doc.path)[0] if self.doc.path else os.path.join(self._start_dir(), "Drawing1")
+        dlg = ExportDialog(self.doc, self.settings, base, preselect, self)
+        if not dlg.exec():
+            return
+        plugin, path, values = dlg.result_values()
+        self.run_export(plugin.id, path, values)
+
+    def run_export(self, plugin_id: str, path: str, values: dict) -> bool:
+        from ..plugins import PluginError, Report, registry
+        plugin = registry.get(plugin_id)
+        report = Report(title=f"Exported {os.path.basename(path)}")
+        for w in plugin.losses(self.doc):
+            report.warn(f"Not kept: {w}")
+        try:
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
+                plugin.export(self.doc, path, values, report)
+            finally:
+                QApplication.restoreOverrideCursor()
+        except PluginError as exc:
+            QMessageBox.warning(self, "Export failed", str(exc))
+            return False
+        except Exception as exc:                # noqa: BLE001
+            QMessageBox.critical(self, "Export failed", f"{path}\n\n{exc}")
+            return False
+        self.settings.set("exchange/last_dir", os.path.dirname(path))
+        self._show_report(report, "Export")
+        return True
+
+    def import_dialog(self) -> None:
+        from .file_exchange import open_filter
+        path, _ = QFileDialog.getOpenFileName(self, "Import into this drawing", self._start_dir(), open_filter())
+        if path:
+            self.import_path(path)
+
+    def import_path(self, path: str) -> bool:
+        """Add another file's model-space objects to this drawing (one undo step)."""
+        from ..core.merge import merge_into
+        from ..plugins import PluginError, Report, registry
+        from .file_exchange import remembered
+        report = Report(title=f"Imported {os.path.basename(path)}")
+        try:
+            plugin = registry.for_path(path, "import")
+            ok, why = plugin.available()
+            if not ok:
+                raise PluginError(why)
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
+                src = plugin.import_(path, remembered(self.settings, plugin.id, "import"), report)
+            finally:
+                QApplication.restoreOverrideCursor()
+        except PluginError as exc:
+            QMessageBox.warning(self, "Can't import", f"{path}\n\n{exc}")
+            return False
+        if src.header.units.mode is not self.doc.header.units.mode:
+            report.info("The file's units differ from this drawing's; sizes were kept in real-world units.")
+        with self.doc.transaction(f"Import {os.path.basename(path)}"):
+            added = merge_into(self.doc, src)
+        self.ctx.selection = set(added)
+        self.controller.update_highlight()
+        report.info(f"{len(added)} objects added and selected (Move them if needed).")
+        self._show_report(report, "Import")
+        return True
+
+    def plot_dialog(self) -> None:
+        from ..plugins import PluginError
+        from ..render.text_qt import ensure_qt_text_engine
+        from .file_exchange import PlotDialog, print_sheets
+        ensure_qt_text_engine()
+        base = os.path.splitext(self.doc.path)[0] if self.doc.path else os.path.join(self._start_dir(), "Drawing1")
+        dlg = PlotDialog(self.doc, self.settings, base + ".pdf", self)
+        if self.controller.space != MODEL_SPACE:
+            w = dlg.form.widgets.get("what")
+            i = w.findData(self.controller.space) if w else -1
+            if i >= 0:
+                w.setCurrentIndex(i)
+                dlg.update_preview()
+        if not dlg.exec():
+            return
+        try:
+            sheets = dlg.sheets()
+            printer = dlg.make_printer()
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
+                print_sheets(printer, sheets)
+            finally:
+                QApplication.restoreOverrideCursor()
+        except PluginError as exc:
+            QMessageBox.warning(self, "Plot", str(exc))
+            return
+        where = printer.outputFileName() or printer.printerName()
+        self.cmdline.append(f"Plotted {len(sheets)} sheet{'s' if len(sheets) > 1 else ''} to {where}")
+
+    def batch_export_dialog(self) -> None:
+        from .file_exchange import BatchExportDialog, batch_export
+        base = os.path.splitext(os.path.basename(self.doc.path))[0] if self.doc.path else "Drawing1"
+        dlg = BatchExportDialog(self.doc, self.settings, self._start_dir(), base, self)
+        if not dlg.exec():
+            return
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            report = batch_export(self.doc, self.settings, dlg.chosen(), dlg.folder.text(), dlg.base.text().strip())
+        finally:
+            QApplication.restoreOverrideCursor()
+        self._show_report(report, "Batch Export")
+
+    # ================================================================ drag and drop
+    def dragEnterEvent(self, ev) -> None:          # noqa: N802
+        if ev.mimeData().hasUrls():
+            ev.acceptProposedAction()
+
+    def dropEvent(self, ev) -> None:               # noqa: N802
+        paths = [u.toLocalFile() for u in ev.mimeData().urls() if u.isLocalFile()]
+        if not paths:
+            return
+        if ev.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            for p in paths:
+                self.import_path(p)                # Ctrl+drop: add into this drawing
+        elif self.maybe_save():
+            self.open_path(paths[0])
 
     def _thumbnail(self) -> bytes | None:
         try:
@@ -573,6 +828,7 @@ class MainWindow(QMainWindow):
         dlg = OptionsDialog(self.settings, self.canvas.gl_info, str(data_dir()), is_portable(), self)
         if dlg.exec():
             ch = dlg.apply()
+            self.apply_converter_setting()
             self.set_theme(ch["dark"])
             self._restart_autosave_timer()
             if ch["restart"]:

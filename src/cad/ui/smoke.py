@@ -101,6 +101,18 @@ def run_smoke_test(app: QApplication, win, report: str | None = None) -> int:
         assert len(doc) == n and not warnings
         win.set_document(doc)
         _pump(app, 100)
+        # file exchange in the built program: plugins found, DXF round trip, PDF written
+        from ..plugins import Report, registry
+        ids = {p.id for p in registry.all()}
+        missing = {"dxf", "dwg", "pdf", "svg", "png", "hpgl"} - ids
+        assert not missing, f"plugins not found: {missing} {registry.load_errors}"
+        tmp = tempfile.mkdtemp()
+        registry.get("dxf").export(win.doc, os.path.join(tmp, "smoke.dxf"), {}, Report())
+        back = registry.get("dxf").import_(os.path.join(tmp, "smoke.dxf"), {}, Report())
+        assert len(back) >= n - 2, f"DXF round trip lost objects: {len(back)} of {n}"
+        registry.get("pdf").export(win.doc, os.path.join(tmp, "smoke.pdf"), {}, Report())
+        assert os.path.getsize(os.path.join(tmp, "smoke.pdf")) > 1000
+        out(f"Plugins: {', '.join(sorted(ids))}; DXF and PDF OK")
         img = win.grab()
         assert not img.isNull()
         out(f"SMOKE TEST OK: {n} entities, renderer={win.canvas.backend_name} ({win.canvas.gl_info})")

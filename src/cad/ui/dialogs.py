@@ -388,8 +388,31 @@ class OptionsDialog(QDialog):
         f.addRow("Text size", self.font)
         f.addRow("Autosave every", self.autosave)
         f.addRow("Display engine (restart)", self.renderer)
+        from PySide6.QtWidgets import QHBoxLayout, QLineEdit, QPushButton, QWidget
+        self.oda = QLineEdit(settings.get("exchange/oda_converter", "") or "")
+        self.oda.setPlaceholderText("Found automatically if installed in the usual place")
+        self.oda.setToolTip("ODAFileConverter.exe, needed for DWG files (free from opendesign.com).")
+        b = QPushButton("Browse…")
+        b.clicked.connect(self._browse_oda)
+        row = QWidget()
+        rl = QHBoxLayout(row)
+        rl.setContentsMargins(0, 0, 0, 0)
+        rl.addWidget(self.oda, 1)
+        rl.addWidget(b)
+        f.addRow("DWG converter", row)
+        from ..plugins import registry
+        from ..plugins.formats.dwg import find_converter
+        try:
+            found = find_converter(settings.get("exchange/oda_converter", "") or None)
+        except Exception:                       # noqa: BLE001
+            found = None
+        user = [p.name for p in registry.all() if not p.builtin]
+        errs = len(registry.load_errors)
         info = QLabel(f"<span style='color:gray'>Display: {renderer_info}<br>"
-                      f"Settings and autosaves: {data_folder}{' (portable mode)' if portable else ''}</span>")
+                      f"Settings and autosaves: {data_folder}{' (portable mode)' if portable else ''}<br>"
+                      f"DWG converter: {found or 'not found (DWG open/save unavailable; DXF works)'}<br>"
+                      f"Your plugins folder: {data_folder}/plugins — loaded: {', '.join(user) or 'none'}"
+                      f"{f' ({errs} failed to load; see the log)' if errs else ''}</span>")
         info.setWordWrap(True)
         info.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
@@ -400,8 +423,16 @@ class OptionsDialog(QDialog):
         lay.addWidget(info)
         lay.addWidget(bb)
 
+    def _browse_oda(self) -> None:
+        from PySide6.QtWidgets import QFileDialog
+        p, _ = QFileDialog.getOpenFileName(self, "ODA File Converter", self.oda.text(),
+                                           "ODAFileConverter (ODAFileConverter*);;All files (*)")
+        if p:
+            self.oda.setText(p)
+
     def apply(self) -> dict:
         s = self.settings
+        s.set("exchange/oda_converter", self.oda.text().strip())
         changes = {
             "dark": self.theme.currentIndex() == 0,
             "restart": (self.scale.currentData() != s.ui_scale) or (self.renderer.currentData() != s.renderer),

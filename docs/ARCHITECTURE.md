@@ -228,7 +228,15 @@ class FormatPlugin(Protocol):
 | SVG import | svgelements |
 | STEP/IGES/STL import | OCCT readers |
 
-`docs/PLUGINS.md` (Phase 4) will walk through writing a new plugin, with a minimal working example.
+`docs/PLUGINS.md` walks through writing a new plugin, with a minimal working example (tested in CI).
+
+**Phase 4 status:** DXF (R12–2018), DWG via ODA, PDF, SVG (export + import), PNG/JPG/TIFF, HP-GL/2,
+batch export and printing are done. They all draw through `core/plot.py`, which turns a model window
+or a layout into sheets of strokes and fills in paper millimeters (linetypes dashed, viewports clipped),
+so every paper output looks the same. The 3D formats (STEP, IGES, STL, glTF, OBJ, 3MF and their
+validators FreeCAD/Blender) move to Phase 6, where there is 3D geometry to export. Inkscape was
+replaced by librsvg (`rsvg-convert`) and poppler as the SVG/PDF validators: same check, a much smaller
+install on the CI runner.
 
 ---
 
