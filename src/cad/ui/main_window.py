@@ -250,6 +250,7 @@ class MainWindow(QMainWindow):
         sb = self.statusBar()
         self.prompt_label = QLabel()
         self.prompt_label.setObjectName("PromptLabel")
+        self.prompt_label.setMinimumWidth(20)          # long prompts are cut off, never widen the window
         self.coord_label = QLabel(objectName="CoordLabel")
         self.units_combo = QComboBox()
         for m in UnitMode:

@@ -38,6 +38,7 @@ class CommandLine(QWidget):
         self.history.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
         self.prompt = QLabel("Type a command:", objectName="PromptLabel")
+        self.prompt.setMinimumWidth(60)      # a long prompt must never widen the window (it would move the drawing)
         self.input = _Input(objectName="CommandInput")
         self.input.setPlaceholderText("Type a command name (e.g. LINE or just 'circ'), or a value, then Enter")
         self.input.key_handler = self._key
@@ -63,6 +64,7 @@ class CommandLine(QWidget):
     def set_prompt(self, text: str, idle: bool) -> None:
         self.idle = idle
         self.prompt.setText(text)
+        self.prompt.setToolTip(text)
         if not idle:
             self.popup.hide()
 

@@ -423,3 +423,12 @@ def test_fast_second_click_in_a_command_counts(qtbot, win):
     qtbot.mouseDClick(win.canvas, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, pos)
     qtbot.keyClick(win.canvas, Qt.Key.Key_Escape)
     assert any(isinstance(e, Line) for e in win.doc.entities.values())
+
+
+def test_long_prompt_does_not_resize_the_drawing(qtbot, win):
+    win.resize(900, 700)
+    qtbot.wait(50)
+    before = win.canvas.width()
+    win.run_command("TRIM")                    # TRIM has a long prompt
+    qtbot.wait(50)
+    assert win.canvas.width() == before
