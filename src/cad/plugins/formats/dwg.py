@@ -53,7 +53,7 @@ def run_converter(exe: str, src: str, out_dir: str, version: str, out_type: str)
     try:
         name = os.path.basename(src)
         shutil.copy2(src, os.path.join(in_dir, name))
-        cmd = [exe, in_dir, out_dir, version, out_type, "0", "1", f"*{os.path.splitext(name)[1].upper()}"]
+        cmd = [exe, in_dir, out_dir, version, out_type, "0", "1", name]     # filter = the exact file name
         env = dict(os.environ)
         kwargs: dict = {}
         if sys.platform == "win32":

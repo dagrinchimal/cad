@@ -13,8 +13,10 @@ from cad.samples import rich_document
 
 FAKE = textwrap.dedent("""
     import os, shutil, sys
-    src, dst, version, out_type = sys.argv[1:5]
+    src, dst, version, out_type, recurse, audit, flt = sys.argv[1:8]
     for f in os.listdir(src):
+        if f != flt:
+            continue
         stem = os.path.splitext(f)[0]
         if "FAIL" in f:
             open(os.path.join(dst, stem + ".err"), "w").write("bad file " + version)
