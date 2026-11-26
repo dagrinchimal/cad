@@ -81,7 +81,8 @@ def run_converter(exe: str, src: str, out_dir: str, version: str, out_type: str)
                 with open(os.path.join(out_dir, err[0]), errors="replace") as fh:
                     detail = fh.read().strip()[:500]
             detail = detail or (proc.stderr or proc.stdout or b"").decode(errors="replace").strip()[:500]
-            raise PluginError("The ODA File Converter couldn't convert the file." + (f"\n{detail}" if detail else ""))
+            raise PluginError("The ODA File Converter couldn't convert the file"
+                              f" (exit code {proc.returncode})." + (f"\n{detail}" if detail else ""))
         return out
     finally:
         shutil.rmtree(in_dir, ignore_errors=True)

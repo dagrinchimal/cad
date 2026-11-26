@@ -27,16 +27,11 @@ jobs:
         run: |
           wget -q -O oda.deb "https://www.opendesign.com/guestfiles/get?filename=ODAFileConverter_QT6_lnxX64_8.3dll_27.1.deb" \
             || wget -q -O oda.deb "https://www.opendesign.com/guestfiles/get?filename=ODAFileConverter_QT6_lnxX64_11dll.deb"
-          sudo apt-get install -y ./oda.deb
+          sudo apt-get install -y ./oda.deb libopengl0 libglu1-mesa
           EXE=$(command -v ODAFileConverter || find /usr/bin /opt -name ODAFileConverter -type f 2>/dev/null | head -1)
           echo "ODA: $EXE"
           if [ -n "$EXE" ]; then echo "CAD_ODA_CONVERTER=$EXE" >> "$GITHUB_ENV"; fi
-          cat "$EXE" | head -20 || true
-          mkdir -p /tmp/odain /tmp/odaout
-          python -c "import ezdxf; d=ezdxf.new('R2018'); d.modelspace().add_line((0,0),(1,1)); d.saveas('/tmp/odain/t.dxf')" || pip install ezdxf
-          python -c "import ezdxf; d=ezdxf.new('R2018'); d.modelspace().add_line((0,0),(1,1)); d.saveas('/tmp/odain/t.dxf')"
-          timeout 120 xvfb-run -a "$EXE" /tmp/odain /tmp/odaout ACAD2018 DWG 0 1 t.dxf; echo "exit $?"
-          ls -la /tmp/odaout
+          ldd /usr/bin/ODAFileConverter_*/ODAFileConverter | grep "not found" || echo "all libraries found"
       - run: pip install -e ".[dev]"
       - name: Unit + GUI tests (software renderer, headless)
         run: pytest -m "not perf" -q -rs
