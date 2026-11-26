@@ -55,6 +55,11 @@ class CanvasEventsMixin:
         if not (self.client and self.client.on_key_press(ev)):
             super().keyPressEvent(ev)
 
+    def keyReleaseEvent(self, ev):          # noqa: N802
+        if self.client and hasattr(self.client, "on_key_release"):
+            self.client.on_key_release(ev)
+        super().keyReleaseEvent(ev)
+
     def leaveEvent(self, ev):               # noqa: N802
         if self.client:
             self.client.on_leave()

@@ -31,7 +31,7 @@ cad = "cad.__main__:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-cad = ["**/*.json", "**/*.glsl"]
+cad = ["**/*.json", "**/*.glsl", "**/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

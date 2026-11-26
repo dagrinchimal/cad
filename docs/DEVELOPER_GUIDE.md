@@ -75,6 +75,33 @@ changes a lot (auto-regen). The OpenGL canvas expands each segment to a quad in 
 and does dash patterns in the fragment shader. The QPainter canvas draws the same arrays for
 machines without OpenGL 3.3. Overlays (cursor, snap markers, tooltips) are painted with QPainter.
 
+## Help pages
+
+Help content is Markdown under `src/cad/help/content/`: `commands/` (one page per command), `concepts/`,
+`tutorials/`, `glossary.md` (one `### Term` per entry, optional `Also:` line) and `synonyms.json`
+(everyday phrases -> page ids, used by search). Each page starts with a header:
+
+```
+---
+id: offset                 # commands: the command's help_id (its name in lower case)
+type: command              # command | concept | tutorial | home
+title: Offset
+command: OFFSET            # command pages only: the facts line and the Start button come from the registry
+synonyms: [parallel copy, wall thickness]
+related: [copy, trim]      # page ids shown under "See also"
+glossary: [offset]         # glossary terms shown under "Words used here"
+---
+```
+
+Links: `[text](help:page-id)`, `[text](term:glossary-term)`, `[text](run:COMMAND)`.
+
+Tutorial steps go in ```` ```commands ```` blocks, one input per line (see `help/tutorial_runner.py` for
+`<Enter>`, `<click x,y>`, `<select x,y>`, `<crossing a b>`, `<units ...>`, `<layer ...>`, `<dimscale n>`).
+`tests/help/` runs every tutorial against a fresh drawing and checks the result, fails if a command has
+no page or a link is broken, and checks that common questions find the right page.
+
+**Adding a command? Add its page in `commands/` too**, or the tests fail.
+
 ## Tests
 
 | Folder | What |

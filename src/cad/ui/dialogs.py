@@ -23,7 +23,7 @@ from .widgets import ColorCombo, LengthEdit, LinetypeCombo, LineweightCombo
 
 
 class LayerDialog(QDialog):
-    COLS = ["", "Name", "On", "Freeze", "Lock", "Color", "Linetype", "Lineweight", "Description"]
+    COLS = ["", "Name", "On", "Freeze", "Lock", "Color", "Linetype", "Lineweight", "Plot", "Description"]
 
     def __init__(self, doc: Document, dark: bool, parent=None) -> None:
         super().__init__(parent)
@@ -118,7 +118,17 @@ class LayerDialog(QDialog):
             lw.set_lineweight(layer.lineweight)
             lw.lineweight_chosen.connect(lambda v, n=name: self._update(n, lineweight=v))
             self.table.setCellWidget(r, 7, lw)
-            self.table.setItem(r, 8, QTableWidgetItem(layer.description))
+            pcb = QCheckBox()
+            pcb.setChecked(layer.plot)
+            pcb.setToolTip("Unticked: the layer shows on screen but never prints or exports to PDF/images")
+            pcb.toggled.connect(lambda v, n=name: self._update(n, plot=v))
+            pw = QWidget()
+            phl = QHBoxLayout(pw)
+            phl.setContentsMargins(0, 0, 0, 0)
+            phl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            phl.addWidget(pcb)
+            self.table.setCellWidget(r, 8, pw)
+            self.table.setItem(r, 9, QTableWidgetItem(layer.description))
             if name == sel_name:
                 self.table.selectRow(r)
         self.table.blockSignals(False)
@@ -146,7 +156,7 @@ class LayerDialog(QDialog):
                 self._guard("Rename layer", lambda: self.doc.rename_layer(old, new))
             else:
                 self.reload()
-        elif item.column() == 8:
+        elif item.column() == 9:
             self._update(old, description=item.text())
 
     def _new(self) -> None:

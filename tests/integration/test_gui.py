@@ -432,3 +432,15 @@ def test_long_prompt_does_not_resize_the_drawing(qtbot, win):
     win.run_command("TRIM")                    # TRIM has a long prompt
     qtbot.wait(50)
     assert win.canvas.width() == before
+
+
+def test_shift_flips_ortho_while_drawing(qtbot, win):
+    win.controller.zoom_extents()
+    win.run_command("LINE")
+    click(qtbot, win, (0, 0))
+    pos = screen(win, (100, 30))
+    QTest.mouseMove(win.canvas, pos)
+    qtbot.mouseClick(win.canvas, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.ShiftModifier, pos)
+    qtbot.keyClick(win.canvas, Qt.Key.Key_Escape)
+    ln = next(e for e in win.doc.entities.values() if isinstance(e, Line))
+    assert ln.p2[1] == pytest.approx(ln.p1[1], abs=1e-9) and ln.p2[0] > ln.p1[0] + 50   # forced horizontal

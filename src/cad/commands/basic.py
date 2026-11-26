@@ -158,6 +158,8 @@ _ui_command("BATCHEXPORT", "Batch Export", "Export the drawing to several format
             aliases=("PUBLISH",), group="Output", keywords=("several formats", "publish", "all formats"))
 _ui_command("RECOVER", "Recover", "Open drawings saved automatically before a crash.",
             keywords=("crash", "autosave", "restore"))
+_ui_command("HELP", "Help", "Open the help: search for any command, word or task; tutorials and a glossary.",
+            aliases=("?",), shortcut="F1", group="Application", keywords=("manual", "how to", "tutorial", "guide"))
 _ui_command("EXIT", "Exit", "Close the program.", aliases=("QUIT",), keywords=("close", "quit"))
 _ui_command("LAYER", "Layer Properties", "Create and manage layers: color, linetype, lineweight, on/off, lock.",
             aliases=("LA",), group="Layers", keywords=("layers", "level", "manage layers"))

@@ -1,0 +1,290 @@
+{
+  "copy in a circle": [
+    "arraypolar"
+  ],
+  "copies around a center": [
+    "arraypolar"
+  ],
+  "bolt circle": [
+    "arraypolar"
+  ],
+  "rows and columns": [
+    "arrayrect"
+  ],
+  "grid of copies": [
+    "arrayrect"
+  ],
+  "make a wall thicker": [
+    "offset"
+  ],
+  "wall thickness": [
+    "offset"
+  ],
+  "parallel copy": [
+    "offset"
+  ],
+  "round a corner": [
+    "fillet"
+  ],
+  "rounded corner": [
+    "fillet"
+  ],
+  "sharp corner": [
+    "fillet"
+  ],
+  "clean up corner": [
+    "fillet",
+    "trim"
+  ],
+  "bevel": [
+    "chamfer"
+  ],
+  "cut off": [
+    "trim"
+  ],
+  "remove the overhang": [
+    "trim"
+  ],
+  "make longer": [
+    "extend",
+    "stretch",
+    "value-editing"
+  ],
+  "make bigger": [
+    "scale",
+    "stretch"
+  ],
+  "make smaller": [
+    "scale"
+  ],
+  "resize": [
+    "scale",
+    "stretch",
+    "value-editing"
+  ],
+  "change a length": [
+    "value-editing",
+    "gripedit",
+    "stretch"
+  ],
+  "type a new size": [
+    "value-editing"
+  ],
+  "change dimension value": [
+    "value-editing",
+    "dimlinear"
+  ],
+  "delete": [
+    "erase"
+  ],
+  "remove": [
+    "erase"
+  ],
+  "print": [
+    "plot"
+  ],
+  "printer": [
+    "plot"
+  ],
+  "print to scale": [
+    "plot",
+    "layouts"
+  ],
+  "save as pdf": [
+    "exportpdf",
+    "export",
+    "plot"
+  ],
+  "make a pdf": [
+    "exportpdf",
+    "plot"
+  ],
+  "send to autocad": [
+    "file-formats",
+    "saveas",
+    "dxfout"
+  ],
+  "open autocad file": [
+    "open",
+    "file-formats"
+  ],
+  "dwg": [
+    "file-formats",
+    "open",
+    "saveas"
+  ],
+  "oda": [
+    "file-formats",
+    "options"
+  ],
+  "image": [
+    "export"
+  ],
+  "picture": [
+    "export"
+  ],
+  "fill": [
+    "hatch"
+  ],
+  "shade an area": [
+    "hatch"
+  ],
+  "measure": [
+    "dist",
+    "dimlinear"
+  ],
+  "how long is": [
+    "dist",
+    "properties"
+  ],
+  "area": [
+    "properties",
+    "boundary"
+  ],
+  "label": [
+    "text",
+    "leader"
+  ],
+  "write": [
+    "text",
+    "mtext"
+  ],
+  "note": [
+    "mtext",
+    "leader"
+  ],
+  "arrow with text": [
+    "leader"
+  ],
+  "symbol": [
+    "block",
+    "insert"
+  ],
+  "reuse": [
+    "block",
+    "insert"
+  ],
+  "lost my drawing": [
+    "zoomextents",
+    "troubleshooting"
+  ],
+  "can't see": [
+    "zoomextents",
+    "troubleshooting",
+    "layers"
+  ],
+  "nothing happens": [
+    "troubleshooting"
+  ],
+  "crash": [
+    "recover",
+    "troubleshooting"
+  ],
+  "feet and inches": [
+    "units-and-typing",
+    "units"
+  ],
+  "imperial": [
+    "units-and-typing",
+    "units"
+  ],
+  "metric": [
+    "units-and-typing",
+    "units"
+  ],
+  "type a length": [
+    "coordinates"
+  ],
+  "exact point": [
+    "coordinates",
+    "snaps"
+  ],
+  "snap to end": [
+    "snaps"
+  ],
+  "line up with": [
+    "snaps"
+  ],
+  "straight lines only": [
+    "snaps",
+    "dsettings"
+  ],
+  "keep parallel": [
+    "gcparallel",
+    "constraints"
+  ],
+  "lock a size": [
+    "dclinear",
+    "constraints"
+  ],
+  "formula": [
+    "parameters"
+  ],
+  "sheet": [
+    "layouts",
+    "layout"
+  ],
+  "title block": [
+    "layouts",
+    "layout"
+  ],
+  "paper size": [
+    "pagesetup",
+    "plot"
+  ],
+  "undo": [
+    "undo"
+  ],
+  "shortcut keys": [
+    "keyboard"
+  ],
+  "for autocad users": [
+    "autocad-users"
+  ],
+  "plugin": [
+    "plugins"
+  ],
+  "dark mode": [
+    "options"
+  ],
+  "bigger buttons": [
+    "options"
+  ],
+  "door": [
+    "tutorial-floor-plan",
+    "arc",
+    "block"
+  ],
+  "floor plan": [
+    "tutorial-floor-plan"
+  ],
+  "machined part": [
+    "tutorial-machined-part"
+  ],
+  "hole pattern": [
+    "arraypolar",
+    "arrayrect",
+    "tutorial-machined-part"
+  ],
+  "color an area": [
+    "hatch"
+  ],
+  "change color": [
+    "properties",
+    "layers",
+    "layer"
+  ],
+  "text size": [
+    "text",
+    "dimstyle",
+    "mtext"
+  ],
+  "linetype": [
+    "layer",
+    "layers"
+  ],
+  "dashed line": [
+    "layer",
+    "layers"
+  ]
+}

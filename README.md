@@ -30,7 +30,9 @@ A friendly 2D/3D CAD program for Windows with AutoCAD-style commands, three unit
 - **Interface:** ribbon (Home, Annotate, Parametric, Layout, Output, View) with icons and labels, command line that doubles as search, status bar, context menus, Properties panel for every object type, light/dark themes, adjustable UI size
 - **Speed:** GPU rendering; tested with 50,000+ objects
 
-Not yet: full help (Phase 5); 3D and the 3D formats STEP/IGES/STL/OBJ/glTF/3MF (Phase 6); installer (Phase 7).
+- **Help (F1):** a page for every command, guides (units, snaps, selecting, layouts, file formats, constraints, coming from AutoCAD), a glossary of 70+ CAD words, and two tutorials (a floor plan in feet-inches, a machined part in mm). Search in your own words with typo tolerance ("copy in a circle", "make a wall thicker"); F1 opens the page of the command you're in or the ribbon button under the mouse; ▶ Start buttons run the command
+
+Not yet: 3D and the 3D formats STEP/IGES/STL/OBJ/glTF/3MF (Phase 6); installer (Phase 7).
 
 ## Keyboard basics
 

@@ -174,7 +174,7 @@ class MainWindow(QMainWindow):
         self.a_redo = act("Redo", "Ctrl+Y", self.redo)
         act("Select all", "Ctrl+A", self.controller.select_all)
         act("Properties", "Ctrl+1", lambda: self.run_ui_action("PROPERTIES"))
-        act("Help", "F1", self.show_help)
+        act("Help", "F1", lambda: self.show_help())
         for key, _label, sc, _tip in TOGGLES:
             if sc:
                 act(key, sc, lambda _=False, k=key: self.toggle(k))
@@ -258,7 +258,7 @@ class MainWindow(QMainWindow):
                                Tool("ZOOM", label="Zoom In", icon="zoomin", then="I", large=False),
                                Tool("ZOOM", label="Zoom Out", icon="zoomout", then="O", large=False),
                                Tool("PAN"), Tool("REGEN")]),
-            Group("Show", [Tool("PROPERTIES"), Tool("OPTIONS")]),
+            Group("Show", [Tool("PROPERTIES"), Tool("OPTIONS"), Tool("HELP")]),
         ]
         self.layer_combo = QComboBox()
         self.layer_combo.setMinimumWidth(170)
@@ -409,7 +409,7 @@ class MainWindow(QMainWindow):
             "NEW": self.new_drawing, "OPEN": self.open_dialog, "QSAVE": self.save, "SAVEAS": self.save_as,
             "RECOVER": lambda: self.offer_recovery(force=True), "EXIT": self.close,
             "LAYER": self.layer_dialog, "UNITS": self.units_dialog, "DSETTINGS": self.drafting_dialog,
-            "OPTIONS": self.options_dialog,
+            "OPTIONS": self.options_dialog, "HELP": self.show_help,
             "PROPERTIES": lambda: self.props_dock.setVisible(not self.props_dock.isVisible()),
         }
         handlers["PAGESETUP"] = self.page_setup_dialog
@@ -1163,14 +1163,32 @@ class MainWindow(QMainWindow):
         return m
 
     # ================================================================ help (full help system arrives in Phase 5)
-    def show_help(self) -> None:
-        c = self.runner.active
-        if c is None:
-            QMessageBox.information(self, "Help", "Type part of a command name in the command line to find tools. "
-                                    "The full searchable help arrives in a later update.")
-            return
-        QMessageBox.information(self, f"Help: {c.label}", f"<b>{c.label}</b> ({c.name})<br><br>{c.description}"
-                                f"<br><br>Current step: {self.runner.prompt}")
+    def show_help(self, page_id: str | None = None) -> None:
+        """F1: help on the running command, else on the ribbon button under the mouse, else the home page."""
+        from PySide6.QtGui import QCursor
+        from .help_window import HelpWindow
+        if page_id is None:
+            if self.runner.active is not None:
+                page_id = self.runner.active.help_id
+            else:
+                w = QApplication.widgetAt(QCursor.pos())
+                while w is not None and not (w.property("help_id") or ""):
+                    w = w.parentWidget()
+                page_id = (w.property("help_id") if w is not None else "") or "home"
+        if getattr(self, "help_window", None) is None:
+            self.help_window = HelpWindow(self)
+            self.help_window.run_command.connect(self._help_run)
+        hw = self.help_window
+        if not hw.show_page(page_id):
+            hw.show_page("home")
+        hw.show()
+        hw.raise_()
+        hw.activateWindow()
+
+    def _help_run(self, name: str) -> None:
+        self.activateWindow()
+        self.run_command(name)
+        self.canvas.setFocus()
 
     # ================================================================ close
     def closeEvent(self, ev: QCloseEvent) -> None:     # noqa: N802

@@ -436,7 +436,11 @@ class CanvasController(QObject):
         self.cursor_model = self.view.to_model(*self.cursor_screen)
         req = self.runner.request
         if wants_point(req):
-            self.snap = self.engine.snap(self.cursor_model, self.view.pixel, self.cfg, base=req.base,
+            cfg = self.cfg
+            if req.base is not None and getattr(self, "shift_down", False):
+                from dataclasses import replace as _replace
+                cfg = _replace(cfg, ortho_on=not cfg.ortho_on)      # hold Shift: Ortho flips, like AutoCAD
+            self.snap = self.engine.snap(self.cursor_model, self.view.pixel, cfg, base=req.base,
                                          grid_spacing=self.doc.header.grid_spacing,
                                          snap_spacing=self.doc.header.snap_spacing)
             self._track_acquisition()
@@ -448,6 +452,15 @@ class CanvasController(QObject):
             self._set_hover(hit.handle if hit else None)
         self._update_preview()
         self._emit_coords()
+
+    def _refresh_cursor(self) -> None:
+        self._recompute_at_cursor()
+        self.canvas.update()
+
+    def on_key_release(self, ev) -> None:
+        if ev.key() == Qt.Key.Key_Shift:
+            self.shift_down = False
+            QTimer.singleShot(0, self._refresh_cursor)
 
     def _set_hover(self, h: int | None) -> None:
         if h != self.hover:
@@ -500,6 +513,7 @@ class CanvasController(QObject):
         self.canvas.update()
 
     def on_mouse_move(self, ev) -> None:
+        self.shift_down = bool(ev.modifiers() & Qt.KeyboardModifier.ShiftModifier)
         pos = ev.position()
         if self.pan_last is not None:
             d = pos - self.pan_last
@@ -525,6 +539,7 @@ class CanvasController(QObject):
         self.canvas.update()
 
     def on_mouse_press(self, ev) -> None:
+        self.shift_down = bool(ev.modifiers() & Qt.KeyboardModifier.ShiftModifier)
         self.canvas.setFocus()
         btn = ev.button()
         pos = ev.position()
@@ -610,6 +625,10 @@ class CanvasController(QObject):
 
     def on_key_press(self, ev) -> bool:
         key = ev.key()
+        if key == Qt.Key.Key_Shift:
+            self.shift_down = True
+            QTimer.singleShot(0, self._refresh_cursor)       # Ortho override shows at once
+            return False
         if key == Qt.Key.Key_Escape:
             self.escape()
             return True

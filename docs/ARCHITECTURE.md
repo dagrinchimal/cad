@@ -261,6 +261,8 @@ install on the CI runner.
 - Search: an index built at startup over titles, aliases, synonyms and body text. `rapidfuzz` handles typos; `synonyms.json` maps everyday phrases to terms. Results update on every keystroke.
 - **F1** opens the help page of the active command (via the registry's help id); with no command active it opens the help home page.
 - A CI test fails if any registered command has no help page, or any help link is broken.
+- **Phase 5 status:** done. Pages are rendered with Qt's Markdown support in a `QTextBrowser` (no extra
+  dependency). Tutorials are executable: their typed steps are run by `help/tutorial_runner.py` in CI.
 - Tutorials: "Draw a simple floor plan" and "Draw a simple machined part", each step linked to its command pages.
 
 ---

@@ -113,6 +113,16 @@ def run_smoke_test(app: QApplication, win, report: str | None = None) -> int:
         registry.get("pdf").export(win.doc, os.path.join(tmp, "smoke.pdf"), {}, Report())
         assert os.path.getsize(os.path.join(tmp, "smoke.pdf")) > 1000
         out(f"Plugins: {', '.join(sorted(ids))}; DXF and PDF OK")
+        from ..commands import REGISTRY
+        from ..help import library
+        lib = library()
+        missing = [c.name for c in REGISTRY.all() if lib.get(c.help_id) is None]
+        assert len(lib.pages) > 150 and not missing and not lib.errors, (len(lib.pages), missing, lib.errors)
+        win.show_help("tutorial-floor-plan")
+        _pump(app, 100)
+        assert "floor plan" in win.help_window.view.toPlainText().lower()
+        win.help_window.close()
+        out(f"Help: {len(lib.pages)} pages, every command documented")
         img = win.grab()
         assert not img.isNull()
         out(f"SMOKE TEST OK: {n} entities, renderer={win.canvas.backend_name} ({win.canvas.gl_info})")
