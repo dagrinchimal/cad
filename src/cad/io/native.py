@@ -140,14 +140,18 @@ def _extract_breps(data: dict) -> dict[str, str]:
     return out
 
 
-def _restore_breps(data: dict, z, names: set) -> None:
+def _restore_breps(data: dict, z, names: set) -> set:
+    """Put the BREP text back into solid records. Returns the zip members used (they're re-written on save)."""
+    used = set()
     for ed in _solid_dicts(data):
         ref = ed.get("shape")
         if isinstance(ref, dict) and ref.get("file") in names:
+            used.add(ref["file"])
             ed["shape"] = z.read(ref["file"]).decode("ascii", errors="replace")
         elif isinstance(ref, dict):
             ed["type"] = "solid_missing"          # keeps the record; shown as an unknown object
             ed["note"] = "3D data file missing from the drawing"
+    return used
 
 
 def save(doc: Document, path: str, thumbnail_png: bytes | None = None) -> None:
@@ -180,7 +184,8 @@ def save(doc: Document, path: str, thumbnail_png: bytes | None = None) -> None:
             for name, text in breps.items():
                 z.writestr(name, text)
             for name, blob in getattr(doc, "extra_members", {}).items():
-                z.writestr(name, blob)
+                if name not in breps:                 # our own solids win over an old member's name
+                    z.writestr(name, blob)
         os.replace(tmp, path)
     except BaseException:
         if os.path.exists(tmp):
@@ -217,8 +222,8 @@ def load(path: str) -> tuple[Document, list[str]]:
                 f"This drawing comes from a newer version (format {_version_str(version)}). "
                 "Features this version doesn't know are kept and saved back unchanged.")
         data = _migrate(data, version)
-        _restore_breps(data, z, names)
-        extra_members = {n: z.read(n) for n in names - KNOWN_MEMBERS if not n.startswith("solids/")}
+        used = _restore_breps(data, z, names)
+        extra_members = {n: z.read(n) for n in names - KNOWN_MEMBERS - used}
     doc = document_from_dict(data)
     doc.extra["_created"] = manifest.get("created")
     doc.manifest_extra = {k: v for k, v in manifest.items()
