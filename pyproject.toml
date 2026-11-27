@@ -23,7 +23,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-qt>=4.4", "pyinstaller>=6.6", "pypdf>=4", "pdfplumber>=0.11", "pillow>=10", "trimesh>=4"]
+dev = ["pytest>=8", "pytest-qt>=4.4", "pyinstaller>=6.6", "pypdf>=4", "pdfplumber>=0.11", "pillow>=10", "trimesh>=4", "networkx>=3", "lxml>=5"]
 
 [project.gui-scripts]
 cad = "cad.__main__:main"
