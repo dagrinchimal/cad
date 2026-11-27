@@ -32,13 +32,18 @@ jobs:
           echo "ODA: $EXE"
           if [ -n "$EXE" ]; then echo "CAD_ODA_CONVERTER=$EXE" >> "$GITHUB_ENV"; fi
           ldd /usr/bin/ODAFileConverter_*/ODAFileConverter | grep "not found" || echo "all libraries found"
+      - name: FreeCAD (re-reads our STEP files; optional, large)
+        continue-on-error: true
+        run: sudo apt-get install -y --no-install-recommends freecad
       - run: pip install -e ".[dev]"
-      - name: Unit + GUI tests (software renderer, headless)
+      - name: Unit + GUI tests (software renderers, headless)
+        env:
+          CAD_RENDERER_3D: software
         run: pytest -m "not perf" -q -rs
-      - name: Exports re-read by LibreCAD, ODA, qpdf, poppler, librsvg, hp2xx
+      - name: Exports re-read by LibreCAD, ODA, qpdf, poppler, librsvg, hp2xx, trimesh, FreeCAD
         env:
           CAD_REQUIRE_VALIDATORS: "1"
-        run: xvfb-run -a pytest tests/validators -v
+        run: xvfb-run -a pytest tests/validators tests/plugins/test_3d_formats.py -v -rs
       - name: GUI tests on the OpenGL renderer (Mesa llvmpipe under Xvfb)
         env:
           QT_QPA_PLATFORM: xcb
@@ -51,11 +56,13 @@ jobs:
         env:
           LIBGL_ALWAYS_SOFTWARE: "1"
           CAD_DATA_DIR: ${{ runner.temp }}/caddata
-        run: xvfb-run -a -s "-screen 0 1920x1080x24" python -m cad --screenshot screenshot-linux.png
+        run: |
+          xvfb-run -a -s "-screen 0 1920x1080x24" python -m cad --screenshot screenshot-linux.png
+          xvfb-run -a -s "-screen 0 1920x1080x24" python -m cad --screenshot-3d screenshot-linux-3d.png
       - uses: actions/upload-artifact@v4
         with:
           name: screenshot-linux
-          path: screenshot-linux.png
+          path: screenshot-linux*.png
 
   windows:
     runs-on: windows-latest
@@ -102,6 +109,8 @@ jobs:
         run: |
           $p = Start-Process -FilePath dist\CAD\CAD.exe -ArgumentList "--screenshot","screenshot-windows.png" -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "Screenshot failed" }
+          $p = Start-Process -FilePath dist\CAD\CAD.exe -ArgumentList "--screenshot-3d","screenshot-windows-3d.png" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "3D screenshot failed" }
       - name: Portable zip
         shell: pwsh
         run: |
@@ -115,5 +124,5 @@ jobs:
         with:
           name: screenshot-windows
           path: |
-            screenshot-windows.png
+            screenshot-windows*.png
             smoke-report.txt

@@ -1,4 +1,4 @@
-# The .cadz file format (version 1.1.0)
+# The .cadz file format (version 1.3.0)
 
 A `.cadz` file is a standard ZIP archive. Rename it to `.zip` to look inside.
 
@@ -7,6 +7,7 @@ A `.cadz` file is a standard ZIP archive. Rename it to `.zip` to look inside.
 | `manifest.json` | yes | Format name and version, program version, timestamps |
 | `document.json` | yes | The drawing: header, tables, entities |
 | `thumbnail.png` | no | Preview image (up to 256×256) |
+| `solids/<handle>_<n>.brep` | if the drawing has solids | One exact 3D shape per solid, in OpenCascade's text BREP format |
 | anything else | no | Kept untouched when an older version re-saves the file |
 
 All lengths are **millimetres** stored as JSON numbers (64-bit floats). All angles are **radians**,
@@ -123,6 +124,18 @@ Version 1.0 files open unchanged (all additions have defaults).
 When an attached object changes, the program updates the dimension, hatch or array in the same
 undo step. Programs that don't understand associativity can ignore these keys: the stored points
 and loops are always current. Version 1.0 and 1.1 files open unchanged.
+
+### Added in 1.3 (3D)
+
+| Where | Keys |
+|---|---|
+| `solid` (new type) | `name`, `shape: {"file": "solids/38_1.brep"}` — the exact shape (B-rep) in the named zip member, in mm, model coordinates. Solids are always in model space. |
+| `sketches` (new table) | `[{name, origin: [x,y,z], xdir: [x,y,z], normal: [x,y,z], visible}]` — a drawing plane. Entities on it have `space: "*Sketch:<name>"` and 2D coordinates on the plane: model point = origin + x·xdir + y·(normal × xdir) |
+| `blocks[].description` | Drawing views (blocks named `View<n>`, made by VIEWBASE) hold `{"drawing_view": {view, scale, hidden, solids}}` as JSON so they can be regenerated; their entities are plain lines |
+
+BREP files are written by `BRepTools::Write` (OCCT 7.9 / 8.0, text format, triangulation stripped)
+and can be read by any OpenCascade-based program (FreeCAD: `Part.read`). A solid whose BREP member
+is missing loads as `solid_missing` and is kept, with a warning. Older files open unchanged.
 
 ## Compatibility rules
 

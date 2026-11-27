@@ -46,6 +46,20 @@ class _View:
         pass
 
 
+class _Ui:
+    """Switches spaces the way the window does (sketches, layouts); views and dialogs are ignored."""
+
+    def __init__(self, ctx) -> None:
+        self.ctx = ctx
+
+    def run_ui_action(self, name: str) -> None:
+        if name.startswith("SHOWLAYOUT:"):
+            space = name.split(":", 1)[1]
+            self.ctx.space = space
+            self.ctx.index.space = space
+            self.ctx.doc.current_space = space
+
+
 def command_blocks(markdown: str) -> list[list[str]]:
     return [[ln.strip() for ln in b.splitlines() if ln.strip()] for b in BLOCK_RE.findall(markdown)]
 
@@ -61,6 +75,7 @@ def run_tutorial(markdown: str, doc: Document | None = None) -> tuple[Document, 
     doc = doc or Document()
     ctx = CommandContext(doc=doc, index=SpatialIndex(doc))
     ctx.view = _View()
+    ctx.ui = _Ui(ctx)
     from ..core.constraints import ConstraintManager
     ctx.constraints = ConstraintManager(doc)          # as in the program: constraints drive the geometry
     r = CommandRunner(ctx)

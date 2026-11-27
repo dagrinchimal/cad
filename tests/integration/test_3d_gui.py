@@ -117,3 +117,20 @@ def test_sketch_tab_and_extrude(qtbot, win):
     win.show_3d("SW Iso")
     win.view3d.repaint()
     assert any(w.sketch == "Sketch1" for w in win.view3d.scene().wires)
+
+
+def test_viewbase_switches_to_layout_and_keeps_running(qtbot, win):
+    from cad.core.model import BlockReference
+    for t in ("BOX", "0,0", "40,20", "10"):
+        type_line(qtbot, win, t)
+    type_line(qtbot, win, "VIEWBASE")
+    qtbot.waitUntil(lambda: win.controller.space in win.doc.layouts)
+    assert win.runner.is_active
+    type_line(qtbot, win, "Front")
+    type_line(qtbot, win, "1")
+    x, y = win.controller.view.to_screen((120, 120))
+    qtbot.mouseClick(win.canvas, Qt.MouseButton.LeftButton, pos=QPoint(round(x), round(y)))
+    type_line(qtbot, win, "")
+    refs = [e for e in win.doc.entities.values() if isinstance(e, BlockReference) and e.name.startswith("View")]
+    assert len(refs) == 1 and abs(refs[0].insert[0] - 120) < 3
+    win.repaint()

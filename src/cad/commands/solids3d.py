@@ -82,6 +82,18 @@ def _exact_profile_for_loop(ctx: CommandContext, loop: np.ndarray):
     return None
 
 
+def _circle_of_loop(loop: np.ndarray):
+    """A true circle if the loop is a tessellated circle (e.g. a copy inside an array)."""
+    if len(loop) < 12:
+        return None
+    pts = loop[:-1] if np.allclose(loop[0], loop[-1]) else loop
+    c = pts.mean(axis=0)
+    r = np.linalg.norm(pts - c, axis=1)
+    if r.mean() > 0 and np.ptp(r) <= r.mean() * 2e-3:
+        return Circle(center=(float(c[0]), float(c[1])), radius=float(r.max()))
+    return None
+
+
 def area_face(ctx: CommandContext, plane: S.Plane, pt):
     """A face from the enclosed area around pt (holes included)."""
     from .draw2 import pick_area
@@ -90,7 +102,8 @@ def area_face(ctx: CommandContext, plane: S.Plane, pt):
         raise S.SolidError("That isn't inside a closed area.")
     wires = []
     for lp in loops:
-        e = _exact_profile_for_loop(ctx, np.asarray(lp))
+        lp = np.asarray(lp, float)
+        e = _exact_profile_for_loop(ctx, lp) or _circle_of_loop(lp)
         if e is not None:
             wires.append(S.wire_from_entity(plane, e))
         else:

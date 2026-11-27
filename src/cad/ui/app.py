@@ -50,6 +50,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--renderer", choices=["auto", "gl", "painter"], help="display engine")
     p.add_argument("--smoke-test", action="store_true", help="start, draw, save, reopen and exit (for CI)")
     p.add_argument("--screenshot", metavar="PNG", help="draw a demo drawing, save a screenshot and exit")
+    p.add_argument("--screenshot-3d", metavar="PNG", help="model a demo part, screenshot the 3D view and exit")
     p.add_argument("--report", metavar="TXT", help="write the smoke-test result to this file")
     p.add_argument("--version", action="version", version=f"{APP_NAME} {__version__}")
     return p.parse_args(argv)
@@ -85,6 +86,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.smoke_test:
         from .smoke import run_smoke_test
         return run_smoke_test(app, win, args.report)
+    if args.screenshot_3d:
+        from .smoke import take_screenshot_3d
+        return take_screenshot_3d(app, win, args.screenshot_3d)
     if args.screenshot:
         from .smoke import take_screenshot
         return take_screenshot(app, win, args.screenshot)

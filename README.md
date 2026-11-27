@@ -3,7 +3,7 @@
 A friendly 2D/3D CAD program for Windows with AutoCAD-style commands, three unit systems
 (millimeters, fractional inches, feet-inches), and a built-in help system.
 
-**Status:** Phase 3 of 7 (full 2D drafting). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full plan.
+**Status:** Phase 6 of 7 (2D drafting, file exchange, help and 3D done; installer next). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full plan.
 
 ## What works now
 
@@ -24,15 +24,19 @@ A friendly 2D/3D CAD program for Windows with AutoCAD-style commands, three unit
 - **Files:** native `.cadz` (open, documented, versioned), autosave and crash recovery
 - **AutoCAD files:** open and save DXF (R12 to 2018) directly; Ctrl+S on an opened DXF saves it back as DXF. Feet-inch drawings are written in inches, like AutoCAD. DWG works too once you install the free [ODA File Converter](https://www.opendesign.com/guestfiles/oda_file_converter) (it can't be bundled); the program finds it automatically, or set its location in Options
 - **Export:** PDF (vector, true scale, one page per layout), SVG (one group per layer), PNG/JPG/TIFF at any resolution, HP-GL/2 for plotters and cutters, DXF, DWG. Before exporting you're told exactly what the format can't keep (e.g. "associativity"). **Batch Export** writes several formats in one go
-- **Import:** DXF, DWG and SVG, either opened as a new drawing or added into the current one (IMPORT). A report lists anything that couldn't be brought in (3D solids, images, SHX fonts replaced by Arial...)
+- **Import:** DXF, DWG and SVG, either opened as a new drawing or added into the current one (IMPORT). A report lists anything that couldn't be brought in (images, SHX fonts replaced by Arial...)
 - **Plot (Ctrl+P):** any printer or a PDF file; model (fit or at a scale like 1:50 or 1/4" = 1'-0") or layouts; color, black only or grayscale; live preview
 - **Plugins:** every format is a plugin; drop your own `.py` into the plugins folder (see [docs/PLUGINS.md](docs/PLUGINS.md))
-- **Interface:** ribbon (Home, Annotate, Parametric, Layout, Output, View) with icons and labels, command line that doubles as search, status bar, context menus, Properties panel for every object type, light/dark themes, adjustable UI size
+- **Interface:** ribbon (Home, Annotate, Parametric, 3D, Layout, Output, View) with icons and labels, command line that doubles as search, status bar, context menus, Properties panel for every object type, light/dark themes, adjustable UI size
 - **Speed:** GPU rendering; tested with 50,000+ objects
+- **3D solids (direct modeling):** sketches on the top/front/side planes, offset planes or a face of a solid, using every 2D tool and constraint; Extrude (with Join, Cut, Through all, Both sides, or click inside areas), Revolve, Sweep, Loft; Box, Cylinder, Cone, Sphere, Torus, Wedge; Union, Subtract, Intersect; Fillet and Chamfer edges, Shell, Slice, Press/Pull, 3D Move/Rotate; Mass Properties
+- **3D view:** orbit, pan, zoom, standard and isometric views, perspective, five visual styles; click faces, edges and points on solids for any command
+- **2D drawings from 3D:** front/top/side/iso views on a layout with hidden lines dashed (third-angle), updated after edits
+- **3D files:** STEP (with colors and names) and IGES open and save; STL opens and saves; 3MF, glTF (.glb) and OBJ export
 
-- **Help (F1):** a page for every command, guides (units, snaps, selecting, layouts, file formats, constraints, coming from AutoCAD), a glossary of 70+ CAD words, and two tutorials (a floor plan in feet-inches, a machined part in mm). Search in your own words with typo tolerance ("copy in a circle", "make a wall thicker"); F1 opens the page of the command you're in or the ribbon button under the mouse; ▶ Start buttons run the command
+- **Help (F1):** a page for every command, guides (units, snaps, selecting, layouts, file formats, constraints, coming from AutoCAD), a glossary of 70+ CAD words, and two tutorials (a floor plan in feet-inches; a machined part in mm, taken from 2D to a 3D solid, shop drawings and STEP). Search in your own words with typo tolerance ("copy in a circle", "make a wall thicker"); F1 opens the page of the command you're in or the ribbon button under the mouse; ▶ Start buttons run the command
 
-Not yet: 3D and the 3D formats STEP/IGES/STL/OBJ/glTF/3MF (Phase 6); installer (Phase 7).
+Not yet: the Windows installer and signed release (Phase 7).
 
 ## Keyboard basics
 

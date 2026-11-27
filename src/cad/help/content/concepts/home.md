@@ -16,7 +16,7 @@ Welcome to **CAD: Calling All Dumbies**. Type in the search box above to find an
 
 ## Tutorials
 - [Draw a simple floor plan](help:tutorial-floor-plan) (feet and inches, about 20 minutes)
-- [Draw a simple machined part](help:tutorial-machined-part) (millimeters, about 15 minutes)
+- [Draw a simple machined part](help:tutorial-machined-part) (millimeters, 2D then 3D, about 25 minutes)
 
 ## How things work
 - [Selecting objects](help:selecting)
@@ -26,6 +26,7 @@ Welcome to **CAD: Calling All Dumbies**. Type in the search box above to find an
 - [Associativity: dimensions, hatches and arrays that follow their shapes](help:associativity)
 - [Constraints](help:constraints)
 - [Layouts, viewports and printing](help:layouts)
+- [3D modeling: solids, sketches, drawing views](help:3d-modeling)
 - [File formats: DXF, DWG, PDF and more](help:file-formats)
 - [Adding your own file formats (plugins)](help:plugins)
 - [When something goes wrong](help:troubleshooting)

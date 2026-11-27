@@ -424,14 +424,18 @@ class Writer:
                 self.dxf.layouts.delete("Layout1")
         elif doc.layouts:
             self.report.warn("DXF R12 has no layouts: only model space was exported.")
+        in_sketches = 0
         for e in doc.entities.values():
             if e.space == MODEL_SPACE:
                 target = msp
             elif e.space in layouts:
                 target = layouts[e.space]
             else:
+                in_sketches += e.space.startswith("*Sketch:")
                 continue
             self.write(e, target)
+        if in_sketches:
+            self.report.warn(f"{in_sketches} object(s) drawn on 3D sketches were left out (DXF has no sketches).")
         # groups
         if not self.r12:
             for g in doc.groups.values():

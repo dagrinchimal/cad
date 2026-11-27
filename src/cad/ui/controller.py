@@ -232,10 +232,10 @@ class CanvasController(QObject):
         self.canvas.invalidate()
 
     # ================================================================ layouts
-    def set_space(self, space: str) -> None:
+    def set_space(self, space: str, cancel: bool = True) -> None:
         if space == self.space:
             return
-        if self.runner.is_active:
+        if self.runner.is_active and cancel:
             self.runner.cancel()
         self.layout_views[self.space] = (self.view.cx, self.view.cy, self.view.scale)
         self.runner.ctx.selection.clear()

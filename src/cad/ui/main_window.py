@@ -257,12 +257,14 @@ class MainWindow(QMainWindow):
             Group("Edit Solids", [Tool("FILLETEDGE", label="Fillet\nEdge"), S("CHAMFEREDGE", "Chamfer Edge"),
                                   S("SHELL"), S("SLICE"), S("3DMOVE", "3D Move"), S("3DROTATE", "3D Rotate")]),
             Group("Inspect", [S("MASSPROP", "Mass Props"), S("FLATSHOT")]),
+            Group("Drawing", [Tool("VIEWBASE", label="Base\nView"), S("VIEWUPDATE", "Update Views")]),
             Group("View", [Tool("VIEW3D", label="3D\nView", then="SW Iso"), Tool("ORBIT"),
                            Tool("PLAN", label="Plan\nView"), S("VSCURRENT", "Visual Style")]),
         ]
         layout_tab = [
             Group("Layout", [Tool("LAYOUT", label="New\nLayout", then="N"), Tool("MVIEW", label="Viewport"),
                              Tool("PAGESETUP", label="Page\nSetup")]),
+            Group("Drawing Views", [Tool("VIEWBASE", label="Base\nView"), Tool("VIEWUPDATE", label="Update\nViews")]),
         ]
         output = [
             Group("Plot", [Tool("PLOT"), Tool("PAGESETUP", label="Page\nSetup")]),
@@ -465,7 +467,7 @@ class MainWindow(QMainWindow):
             self.show_plan()
             return
         if name.startswith("SHOWLAYOUT:"):
-            self.show_space(name.split(":", 1)[1])
+            self.show_space(name.split(":", 1)[1], cancel=False)     # a running command (VIEWBASE) goes on
             return
         fn = handlers.get(name)
         if fn:
@@ -1002,12 +1004,12 @@ class MainWindow(QMainWindow):
         self.view_stack.setCurrentWidget(self.canvas)
         self.canvas.setFocus()
 
-    def show_space(self, space: str) -> None:
+    def show_space(self, space: str, cancel: bool = True) -> None:
         if space != "*Model" and hasattr(self, "view_stack"):
             self.view_stack.setCurrentWidget(self.canvas)
         if not self._space_exists(space):
             space = "*Model"
-        self.controller.set_space(space)
+        self.controller.set_space(space, cancel=cancel)
         self._refresh_layout_tabs()
         self.canvas.setFocus()
 

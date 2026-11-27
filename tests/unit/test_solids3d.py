@@ -240,3 +240,34 @@ def test_sketch_offset_and_delete(r):
     assert sk.origin[2] == pytest.approx(25)
     go(r, "DELSKETCH", "")
     assert not r.ctx.doc.sketches
+
+
+def test_viewbase_and_update(r):
+    from cad.commands.drawing_views import view_settings
+    from cad.core.model import BlockReference
+    r.ctx.ui = Ui()
+    go(r, "BOX", (0, 0), (40, 20), "10")
+    go(r, "CYLINDER", (20, 10), "4", "10")
+    a, b = solids(r)
+    go(r, "SUBTRACT", {a.handle}, {b.handle})
+    go(r, "VIEWBASE", "Front", "0.5", (100, 100), (200, 100), (100, 200), (200, 200), "")
+    doc = r.ctx.doc
+    refs = [e for e in doc.entities.values() if isinstance(e, BlockReference) and view_settings(doc.blocks[e.name])]
+    assert sorted(view_settings(doc.blocks[e.name])["view"] for e in refs) == ["Front", "Right", "SE Iso", "Top"]
+    front = next(e for e in refs if view_settings(doc.blocks[e.name])["view"] == "Front")
+    assert front.space in doc.layouts and front.sx == 0.5
+    lines = doc.blocks[front.name].entities
+    assert any(e.layer == "View hidden" for e in lines)          # the hole, hidden in the front view
+    xs = [p for e in lines if isinstance(e, Line) for p in (e.p1[0], e.p2[0])]
+    assert max(xs) - min(xs) == pytest.approx(40)
+    # top view sits straight above the front view
+    top = next(e for e in refs if view_settings(doc.blocks[e.name])["view"] == "Top")
+    assert top.insert[0] == pytest.approx(front.insert[0])
+    # edit the solid, update
+    s = solids(r)[0]
+    with doc.transaction("grow"):
+        doc.replace(s.with_props(shape=S.box((0, 0, 0), (60, 20, 10))))
+    go(r, "VIEWUPDATE")
+    lines = doc.blocks[front.name].entities
+    xs = [p for e in lines if isinstance(e, Line) for p in (e.p1[0], e.p2[0])]
+    assert max(xs) - min(xs) == pytest.approx(60)

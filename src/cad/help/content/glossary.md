@@ -15,11 +15,17 @@ A fill-in text field inside a block, such as a door number or a title block's DA
 ### Autosave
 A safety copy the program saves every few minutes, so you can [recover](help:recover) your work after a crash.
 
+### Axis
+A straight line something turns around (for [Revolve](help:revolve) or [3D Rotate](help:3drotate)), or one of the drawing's X, Y and Z directions.
+
 ### Base point
 The point you pick to say "this spot moves to there" in Move, Copy, Rotate, Scale and Stretch. Pick something you can name, like a corner.
 
 ### Block
 A named group of objects saved as one symbol (a door, a bolt, a title block) that you can insert many times. Change the block and every copy changes. See [Create Block](help:block).
+
+### Boolean
+Combining solids like shapes in a Venn diagram: [Union](help:union) adds, [Subtract](help:subtract) takes away, [Intersect](help:intersect) keeps the overlap.
 
 ### Boundary
 The closed outline around an area, e.g. the walls around a room. Hatches fill boundaries; [Boundary](help:boundary) traces one into a polyline.
@@ -84,17 +90,29 @@ AutoCAD's name for the dimension style's overall scale: it multiplies every dime
 ### Displacement
 How far and in which direction something moves, as x,y.
 
+### Drawing view
+A 2D view of a 3D part (front, top, side, iso) on a layout sheet, made by [Base View](help:viewbase). Hidden edges are dashed.
+
 ### DWG
 AutoCAD's own drawing file format. Reading and writing it needs the free ODA File Converter. See [File formats](help:file-formats).
 
 ### DXF
 Drawing Exchange Format: the open AutoCAD format nearly every CAD program reads and writes.
 
+### Edge
+Where two faces of a solid meet, like the corner line of a box. [Fillet Edge](help:filletedge) rounds edges.
+
 ### Extension line
 The short lines from the object to a dimension line, showing what's being measured.
 
 ### Extents
 The smallest rectangle around everything in the drawing. Zoom Extents fits it in the window.
+
+### Extrude
+Give a flat outline height to make a solid, like pushing dough through a shaped hole. See [Extrude](help:extrude).
+
+### Face
+One surface of a solid: the top of a box, the inside of a hole. [Press/Pull](help:presspull) moves faces.
 
 ### Fence
 A line you draw in Trim or Extend: every object it crosses is trimmed or extended where it crosses.
@@ -123,6 +141,9 @@ Objects tied together so clicking one selects them all, while each stays editabl
 ### Hatch
 A pattern or solid fill inside a closed area. See [Hatch](help:hatch).
 
+### Hidden line
+An edge you couldn't see from where you're looking because the part is in the way. Drawing views show them dashed.
+
 ### HPGL
 HP-GL/2, the language of pen plotters and many vinyl and laser cutters. Colors become pen numbers.
 
@@ -132,8 +153,14 @@ Drawn inside a circle: an inscribed polygon's corners touch the circle. The oppo
 ### Insertion point
 The point a block or text is placed by. For a block it's the base point chosen when the block was made.
 
+### Intersect
+Keep only where solids overlap. See [Intersect](help:intersect).
+
 ### Island
 An enclosed area inside a hatched area, like a column inside a room. Hatch leaves islands empty.
+
+### Isometric
+A 3D view looking from a corner, so the top and two sides show equally. See [3D View](help:view3d).
 
 ### Justification
 Which point of a text the insertion point is: left, center, right, middle, top-left and so on.
@@ -152,6 +179,9 @@ The dash pattern of a line: continuous, dashed, center (long-short), hidden and 
 
 ### Lineweight
 How thick a line prints, in millimeters (0.25 mm is a normal line; 0.5 mm a heavy one). Turn on LWT in the status bar to see them on screen.
+
+### Loft
+A solid that blends from one outline to another. See [Loft](help:loft).
 
 ### Major axis
 The longest line across an ellipse, through its center. The minor axis is the shortest one.
@@ -193,11 +223,20 @@ The space of a layout sheet, measured in paper units. Text on a layout is drawn 
 ### Parameter
 A named value of a dimensional constraint (`d1`, `rad1`…) that other constraints can use in formulas. See [Parameters](help:parameters).
 
+### Path
+The line or curve a [Sweep](help:sweep) follows.
+
 ### PDF
 Portable Document Format. Exports here are vector and true to scale: print at 100% and the drawing scale is right.
 
 ### Perpendicular
 At a right angle (90°).
+
+### Plan
+The view from straight above: the normal flat drawing view. See [Plan View](help:plan).
+
+### Plane
+A flat, endless surface in 3D, like a sheet of glass. Sketches are drawn on planes.
 
 ### Plot
 To print, on paper or to a PDF. See [Plot](help:plot).
@@ -214,11 +253,26 @@ One object made of connected straight and curved segments. See [Polyline](help:p
 ### Precision
 How many decimal places, or which smallest fraction (like 1/16"), numbers are shown with.
 
+### Primitive
+A basic ready-made solid: box, cylinder, cone, sphere, torus or wedge.
+
+### Profile
+The closed outline you extrude, revolve, sweep or loft into a solid: a cross-section of the part.
+
+### Projected view
+A drawing view lined up with another one: the top view directly above the front view, the side view beside it.
+
 ### Radius
 The distance from a circle's center to its edge: half the diameter. Shown with R.
 
+### Reference geometry
+The grey lines on a sketch showing your solids' edges seen square-on, to snap to. They're locked and don't print.
+
 ### Relative coordinates
 A point measured from the last point instead of from the origin, written with `@`: `@100,0`.
+
+### Revolve
+Spin an outline around an axis to make a round solid. See [Revolve](help:revolve).
 
 ### Ribbon
 The band of tabs and buttons at the top of the window.
@@ -226,11 +280,35 @@ The band of tabs and buttons at the top of the window.
 ### Scale factor
 A multiplier for size: 2 doubles, 0.5 halves.
 
+### Shell
+A hollowed-out solid with walls of even thickness. See [Shell](help:shell).
+
+### Sketch
+A flat drawing plane placed in 3D (top, front, side, offset or on a face). You draw on it with the normal 2D tools, then extrude or revolve. See [Sketch](help:sketch).
+
+### Slice
+Cut a solid in two with a flat plane. See [Slice](help:slice).
+
+### Solid
+A closed 3D shape with volume, like a real part. Made with [Extrude](help:extrude), [Box](help:box) and so on. See [3D modeling](help:3d-modeling).
+
 ### Spline
 A smooth freeform curve through a set of points. See [Spline](help:spline).
 
+### STEP
+The standard file format for exchanging exact 3D parts between CAD programs (`.step` or `.stp`).
+
+### STL
+A 3D file made of triangles, used by 3D printers. Curved faces become many small flat ones.
+
+### Subtract
+Cut one solid out of another. See [Subtract](help:subtract).
+
 ### SVG
 Scalable Vector Graphics: a vector image format for the web, Inkscape and laser cutters.
+
+### Sweep
+Move an outline along a path to make a solid. See [Sweep](help:sweep).
 
 ### Tangent
 Touching a curve at one point without crossing it, so the two meet smoothly.
@@ -244,14 +322,26 @@ The height of capital letters, as measured in the drawing.
 ### Title block
 The labeled box on a sheet with the title, scale, date, sheet number and who drew it.
 
+### Union
+Join solids into one. See [Union](help:union).
+
 ### Units
 How lengths are shown and read: millimeters, fractional inches or feet-and-inches. See [Units](help:units-and-typing).
 
 ### Vertex
 A corner point of a polyline. Plural: vertices.
 
+### View
+The direction you're looking at the model from: plan (top), front, side or isometric.
+
 ### Viewport
 A window on a layout sheet showing the model at a set scale. See [Viewport](help:mview).
+
+### Visual style
+How solids look in the 3D view: wireframe, hidden lines, shaded, shaded with edges or x-ray. See [Visual Style](help:vscurrent).
+
+### Volume
+How much space a solid fills, in mm³ or in³. See [Mass Properties](help:massprop).
 
 ### Window selection
 A selection box dragged from left to right (solid outline): only objects completely inside are selected.

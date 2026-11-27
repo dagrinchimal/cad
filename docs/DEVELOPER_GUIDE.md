@@ -102,6 +102,18 @@ no page or a link is broken, and checks that common questions find the right pag
 
 **Adding a command? Add its page in `commands/` too**, or the tests fail.
 
+## 3D
+
+- New modeling operations go in `core/solids.py` (pure functions shape -> shape, no Qt); commands in
+  `commands/solids3d.py` use `new_solid()` / `replace_shape()` so results land in model space with undo.
+- Requests: `GetFace(planar_only)` and `GetEdge(solid)` return `FacePick` / `EdgePick` (entity, index,
+  3D point). Face/edge indices follow `solids.faces()` / `solids.edges()` order.
+- OCP 8 moved arrays and maps to `OCP.collections` and renamed some statics; `solids.py` has the
+  compatibility imports. `Bnd_Box.Get()` is broken in OCP 8: use `CornerMin/CornerMax`.
+- Set `CAD_RENDERER_3D=software` to force the QPainter 3D renderer.
+- 3D formats live in `plugins/formats/solid3d.py`; `tests/plugins/test_3d_formats.py` re-reads mesh
+  exports with trimesh and exact ones with OpenCascade (and FreeCAD when installed).
+
 ## Tests
 
 | Folder | What |

@@ -123,6 +123,7 @@ def run_smoke_test(app: QApplication, win, report: str | None = None) -> int:
         assert "floor plan" in win.help_window.view.toPlainText().lower()
         win.help_window.close()
         out(f"Help: {len(lib.pages)} pages, every command documented")
+        out(smoke_3d(app, win))
         img = win.grab()
         assert not img.isNull()
         out(f"SMOKE TEST OK: {n} entities, renderer={win.canvas.backend_name} ({win.canvas.gl_info})")
@@ -134,6 +135,75 @@ def run_smoke_test(app: QApplication, win, report: str | None = None) -> int:
         out(traceback.format_exc())
         out(f"SMOKE TEST FAILED: {exc}")
         return 1
+
+
+def demo_part(win) -> None:
+    """A small machined plate: box, two holes, a pocket, filleted corners (for the 3D checks and screenshot)."""
+    from ..core import solids as S
+    from ..core.model import Solid
+    r = win.runner
+
+    def cmd(*parts):
+        for p in parts:
+            r.submit_text(p)
+
+    cmd("BOX", "0,0", "120,80", "20")
+    cmd("CYLINDER", "30,40", "10", "20")
+    cmd("CYLINDER", "90,40", "10", "20")
+    sols = [e.handle for e in win.doc.entities.values() if isinstance(e, Solid)]
+    r.run("SUBTRACT")
+    r.submit_selection({sols[0]})
+    r.submit_selection(set(sols[1:]))
+    plate = next(e for e in win.doc.entities.values() if isinstance(e, Solid))
+    m = S.mesh(plate.shape)
+    vertical = [i for i, (pts, kind) in enumerate(zip(m.edges, m.edge_kind))
+                if kind == "line" and abs(pts[0][2] - pts[-1][2]) > 19
+                and round(pts[0][0]) in (0, 120) and round(pts[0][1]) in (0, 80)]
+    with win.doc.transaction("Fillet corners"):
+        edges = S.edges(plate.shape)
+        win.doc.replace(plate.with_props(shape=S.fillet(plate.shape, [edges[i] for i in vertical], 8)))
+
+
+def smoke_3d(app, win) -> str:
+    """3D in the built program: kernel, commands, the 3D view, STEP/STL/glTF export."""
+    from ..core import solids as S
+    from ..core.model import Solid
+    from ..plugins import Report, registry
+    win.set_document(win._blank_document())
+    demo_part(win)
+    (plate,) = [e for e in win.doc.entities.values() if isinstance(e, Solid)]
+    vol = S.mass_properties(plate.shape)["volume"]
+    assert 120 * 80 * 20 * 0.9 < vol < 120 * 80 * 20, vol
+    tmp = tempfile.mkdtemp()
+    for pid, ext in (("step", "step"), ("stl", "stl"), ("gltf", "glb"), ("3mf", "3mf")):
+        registry.get(pid).export(win.doc, os.path.join(tmp, "part." + ext), {}, Report())
+        assert os.path.getsize(os.path.join(tmp, "part." + ext)) > 500, pid
+    back = registry.get("step").import_(os.path.join(tmp, "part.step"), {}, Report())
+    (b,) = [e for e in back.entities.values() if isinstance(e, Solid)]
+    assert abs(S.mass_properties(b.shape)["volume"] - vol) < vol * 1e-6
+    win.show_3d("SE Iso")
+    _pump(app, 200)
+    img = win.view3d.render_image()
+    assert img.pixelColor(img.width() // 2, img.height() // 2) != img.pixelColor(2, 2), "3D view is empty"
+    win.show_plan()
+    win.doc.mark_saved()
+    return f"3D: solids, STEP/STL/glTF/3MF OK, 3D view renderer={win.view3d.renderer.name}"
+
+
+def take_screenshot_3d(app: QApplication, win, path: str) -> int:
+    win.resize(1500, 920)
+    _pump(app, 300)
+    demo_part(win)
+    win.ribbon.tabbar.setCurrentIndex(3)
+    win.show_3d("SE Iso")
+    _pump(app, 300)
+    win.view3d.repaint()
+    _pump(app, 100)
+    win.grab().save(path)
+    win.doc.mark_saved()
+    print(f"Screenshot saved: {path}")
+    win.close()
+    return 0
 
 
 def grab_window(win):

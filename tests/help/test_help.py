@@ -128,3 +128,21 @@ def test_machined_part_tutorial_runs(lib):
     ords = sorted(d.measurement() for d in doc.entities.values() if isinstance(d, Dimension) and d.dimtype == "ordinate")
     assert ords == [20, 50, 80]
     assert "dia1" in {k.name for k in doc.constraints.values()}
+
+
+def test_machined_part_tutorial_goes_3d(lib):
+    import math
+    from cad.commands.drawing_views import view_settings
+    from cad.core import solids as S
+    from cad.core.model import BlockReference, Solid
+    doc, msgs = run_tutorial(lib.get("tutorial-machined-part").body)
+    (part,) = [e for e in doc.entities.values() if isinstance(e, Solid)]
+    plate = (100 * 60 - (4 - math.pi) * 10 ** 2) * 10
+    holes = 3 * math.pi * 7 ** 2 * 10
+    pocket = 30 * 10 * 4
+    assert S.mass_properties(part.shape)["volume"] == pytest.approx(plate - holes - pocket, rel=1e-6)
+    assert len(S.faces(part.shape)) == 18            # true round holes and fillets, not facets
+    assert any("volume" in m for m in msgs)
+    views = sorted(view_settings(doc.blocks[e.name])["view"] for e in doc.entities.values()
+                   if isinstance(e, BlockReference) and e.name in doc.blocks and view_settings(doc.blocks[e.name]))
+    assert views == ["Front", "SE Iso", "Top"]

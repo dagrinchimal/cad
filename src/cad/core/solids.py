@@ -493,6 +493,18 @@ def wedge(p1: Vec3, dx: float, dy: float, dz: float) -> TopoDS_Shape:
 
 
 # ====================================================================== editing solids
+def compound(shapes) -> TopoDS_Shape:
+    """Several shapes as one (no boolean); for views and export."""
+    from OCP.BRep import BRep_Builder
+    from OCP.TopoDS import TopoDS_Compound
+    comp = TopoDS_Compound()
+    b = BRep_Builder()
+    b.MakeCompound(comp)
+    for sh in shapes:
+        b.Add(comp, sh)
+    return comp
+
+
 def union(a, b) -> TopoDS_Shape:
     return clean(_check(BRepAlgoAPI_Fuse(a, b).Shape(), "Union"))
 
@@ -686,7 +698,7 @@ _MESH_CACHE: dict = {}
 
 def mesh(shape, deflection: float | None = None) -> Mesh:
     """Triangles (for shading/picking) and edge polylines (for display/snapping). Cached per shape."""
-    key = (shape.__hash__(), id(shape))
+    key = (shape.__hash__(), id(shape), deflection)
     hit = _MESH_CACHE.get(key)
     if hit is not None and hit[0] is shape:
         return hit[1]
