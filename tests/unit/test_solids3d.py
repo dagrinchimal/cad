@@ -360,3 +360,14 @@ def test_dropshape_size_option_and_size3d(r):
     r.ctx.selection.clear()
     go(r, "SIZE3D", {b.handle}, "100,40,20")
     assert S.bbox3(r.ctx.doc.get(b.handle).shape) == pytest.approx((0, 0, 0, 100, 40, 20), abs=1e-6)
+
+
+def test_resaving_a_file_with_solids_has_no_duplicate_members(r, tmp_path):
+    import zipfile
+    go(r, "BOX", (0, 0), (10, 10), "10")
+    p1, p2 = tmp_path / "a.cadz", tmp_path / "b.cadz"
+    save(r.ctx.doc, str(p1))
+    d2, _ = load(str(p1))
+    save(d2, str(p2))
+    names = zipfile.ZipFile(p2).namelist()
+    assert len(names) == len(set(names))

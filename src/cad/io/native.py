@@ -218,7 +218,7 @@ def load(path: str) -> tuple[Document, list[str]]:
                 "Features this version doesn't know are kept and saved back unchanged.")
         data = _migrate(data, version)
         _restore_breps(data, z, names)
-        extra_members = {n: z.read(n) for n in names - KNOWN_MEMBERS}
+        extra_members = {n: z.read(n) for n in names - KNOWN_MEMBERS if not n.startswith("solids/")}
     doc = document_from_dict(data)
     doc.extra["_created"] = manifest.get("created")
     doc.manifest_extra = {k: v for k, v in manifest.items()
