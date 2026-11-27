@@ -1,10 +1,10 @@
 from .document import ChangeSet, Document, DocumentError, Header, Layer
 from .entities import (
     ENTITY_TYPES, MODEL_SPACE, Arc, ArrayEntity, AttributeDefinition, BlockReference, Circle, Dimension, Ellipse, Entity,
-    Hatch, Leader, Line, MText, Point, Polyline, Spline, Text, UnknownEntity, Viewport, entity_from_dict,
+    Hatch, Leader, Line, MText, Point, Polyline, Solid, Spline, Text, UnknownEntity, Viewport, entity_from_dict,
     entity_to_dict,
 )
-from .tables import PAPER_SIZES, BlockDefinition, DimStyle, Group, Layout
+from .tables import PAPER_SIZES, SKETCH_PREFIX, BlockDefinition, DimStyle, Group, Layout, Sketch, is_sketch_space, sketch_space
 from .styles import (
     BYBLOCK, BYLAYER, LW_BYBLOCK, LW_BYLAYER, LW_DEFAULT, STANDARD_LINETYPES,
     STANDARD_LINEWEIGHTS, Linetype, color_label, color_to_rgb, lineweight_label,
@@ -13,7 +13,7 @@ from .styles import (
 __all__ = [
     "ArrayEntity",
     "MODEL_SPACE", "AttributeDefinition", "BlockReference", "Dimension", "Ellipse", "Hatch", "Leader", "MText",
-    "Spline", "Text", "Viewport", "PAPER_SIZES", "BlockDefinition", "DimStyle", "Group", "Layout",
+    "Solid", "Spline", "Text", "Viewport", "PAPER_SIZES", "SKETCH_PREFIX", "Sketch", "is_sketch_space", "sketch_space", "BlockDefinition", "DimStyle", "Group", "Layout",
     "Arc", "BYBLOCK", "BYLAYER", "ChangeSet", "Circle", "Document", "DocumentError", "ENTITY_TYPES",
     "Entity", "Header", "LW_BYBLOCK", "LW_BYLAYER", "LW_DEFAULT", "Layer", "Line", "Linetype", "Point",
     "Polyline", "STANDARD_LINETYPES", "STANDARD_LINEWEIGHTS", "UnknownEntity", "color_label",

@@ -126,6 +126,20 @@ class GetSelection(Request):
 
 
 @dataclass(slots=True)
+class GetFace(Request):
+    """Pick a face of a solid. Answers a FacePick (entity, face index, 3D point).
+    A click in the plan view looks straight down; in the 3D view along the line of sight; typing x,y,z
+    takes the face nearest that point."""
+    planar_only: bool = False
+
+
+@dataclass(slots=True)
+class GetEdge(Request):
+    """Pick an edge of a solid. Answers an EdgePick (entity, edge index, 3D point)."""
+    solid: int | None = None          # only edges of this solid (handle)
+
+
+@dataclass(slots=True)
 class GetEntity(Request):
     """Pick one object. Answers (entity, picked point).
 
@@ -185,6 +199,8 @@ class CommandContext:
     view: ViewApi = field(default_factory=_NullView)
     ui: UiApi = field(default_factory=_NullUi)
     last_point: Vec | None = None
+    point_z: float = 0.0              # elevation of the last point (typed x,y,z or a click on a solid)
+    pick_ray: tuple | None = None     # the 3D view sets (origin, direction) of the last click
     space: str = "*Model"
     constraints: object = None                             # ConstraintManager (set by the UI / tests)
     memory: dict = field(default_factory=dict)            # per-command remembered values
@@ -481,10 +497,64 @@ class CommandRunner:
         self._step(lambda: gen.send(value))
 
     # ----------------------------------------------------------- input from the UI
-    def submit_point(self, pt: Vec) -> None:
-        """A point picked with the mouse (already snapped)."""
+    def _typed_z(self, t: str) -> float:
+        """The z of a typed 'x,y,z' (relative to the last point's z with @), else 0."""
+        body = t.strip().lstrip("#")
+        rel = body.startswith("@")
+        parts = body.lstrip("@").split(",")
+        if len(parts) == 3 and "<" not in body:
+            z = parse_length(parts[2], self.ctx.units)
+            return (self.ctx.point_z + z) if rel else z
+        return self.ctx.point_z if rel else 0.0
+
+    def submit_ray(self, origin, direction, pt2: Vec | None = None, z: float = 0.0,
+                   tolerance: float | None = None) -> None:
+        """A click in a 3D view: the line of sight, and its point on the work plane."""
+        self.ctx.pick_ray = (tuple(origin), tuple(direction))
+        self._ray_tol = tolerance
+        try:
+            if isinstance(self.request, (GetFace, GetEdge)):
+                self._pick_3d(self.request, ray=(origin, direction))
+            elif pt2 is not None:
+                self.submit_point(pt2, z)
+        finally:
+            self.ctx.pick_ray = None
+            self._ray_tol = None
+
+    def _pick_3d(self, req, ray=None, point3=None) -> None:
+        from ..core import solid_pick as SP
+        doc = self.ctx.doc
+        if isinstance(req, GetFace):
+            hit = SP.pick_face(doc, *ray) if ray is not None else SP.face_near(doc, point3)
+            if hit is None:
+                self.ctx.echo("No solid face there.")
+                return
+            if req.planar_only:
+                from ..core.solids import face_plane, faces
+                if face_plane(faces(hit.entity.shape)[hit.face]) is None:
+                    self.ctx.echo("Pick a flat face.")
+                    return
+            self._send(hit)
+        else:
+            tol = getattr(self, "_ray_tol", None) or self.ctx.view.pick_tolerance()
+            hit = SP.pick_edge(doc, *ray, tol) if ray is not None else SP.edge_near(doc, point3)
+            if hit is None:
+                self.ctx.echo("No solid edge there. Click right on an edge.")
+                return
+            if req.solid is not None and hit.entity.handle != req.solid:
+                self.ctx.echo("Pick edges of the same solid.")
+                return
+            self._send(hit)
+
+    def submit_point(self, pt: Vec, z: float = 0.0) -> None:
+        """A point picked with the mouse (already snapped); z is its elevation when known."""
         req = self.request
+        if isinstance(req, (GetFace, GetEdge)):
+            from ..core.solid_pick import ray_from_above
+            self._pick_3d(req, ray=self.ctx.pick_ray or ray_from_above(self.ctx.doc, pt))
+            return
         if isinstance(req, GetPoint):
+            self.ctx.point_z = z
             self._send(pt)
         elif isinstance(req, GetDistance):
             if req.base is None:
@@ -507,6 +577,16 @@ class CommandRunner:
                 self.ctx.echo("Type an angle")
                 return
             self._send(math.atan2(pt[1] - req.base[1], pt[0] - req.base[0]))
+
+    def submit_entity(self, handle: int, pt: Vec) -> bool:
+        """An object picked in a view that isn't the plan (the 3D view) for GetEntity."""
+        if not isinstance(self.request, GetEntity):
+            return False
+        e = self.ctx.doc.get(handle)
+        if e is None:
+            return False
+        self._send((e, pt))
+        return True
 
     def submit_selection(self, handles: set[int]) -> None:
         if isinstance(self.request, GetSelection):
@@ -551,8 +631,13 @@ class CommandRunner:
             if isinstance(req, GetPoint):
                 pt = parse_point_text(t, self.ctx.units, req.base if req.base is not None else self.ctx.last_point,
                                       self.direction_provider())
+                self.ctx.point_z = self._typed_z(t)
                 self.ctx.last_point = pt
                 self._send(pt)
+            elif isinstance(req, (GetFace, GetEdge)):
+                pt = parse_point_text(t, self.ctx.units, self.ctx.last_point, None)
+                z = self._typed_z(t)
+                self._pick_3d(req, point3=(pt[0], pt[1], z))
             elif isinstance(req, GetDistance):
                 if "," in t or "<" in t or t.startswith("@"):
                     pt = parse_point_text(t, self.ctx.units, req.base, None)

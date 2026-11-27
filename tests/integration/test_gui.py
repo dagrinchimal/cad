@@ -252,7 +252,7 @@ def test_every_command_has_an_icon_and_ribbon_tabs():
 
 def test_ribbon_has_phase3_tabs(win):
     titles = [win.ribbon.tabbar.tabText(i) for i in range(win.ribbon.tabbar.count())]
-    assert titles == ["Home", "Annotate", "Parametric", "Layout", "Output", "View"]
+    assert titles == ["Home", "Annotate", "Parametric", "3D", "Layout", "Output", "View"]
     names = {t.command for _, t in win.ribbon.buttons}
     for n in ("TRIM", "HATCH", "DIMLINEAR", "GCPARALLEL", "MVIEW", "INSERT"):
         assert n in names

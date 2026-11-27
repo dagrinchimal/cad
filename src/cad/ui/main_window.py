@@ -10,12 +10,13 @@ from PySide6.QtCore import QByteArray, QPoint, QSize, Qt, QTimer
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDockWidget, QFileDialog, QInputDialog, QLabel, QMainWindow, QMenu, QMessageBox,
-    QTabBar, QToolButton, QVBoxLayout, QWidget,
+    QStackedWidget, QTabBar, QToolButton, QVBoxLayout, QWidget,
 )
 
 from .. import APP_NAME, FILE_EXTENSION
 from ..commands import REGISTRY, CommandContext, CommandRunner, GetDistance, GetPoint, GetSelection
 from ..core.model import MODEL_SPACE, Document, Layer
+from ..core.model.tables import SKETCH_PREFIX, is_sketch_space, sketch_space
 from ..core.spatial import SpatialIndex
 from ..core.units import UnitMode, UnitSettings
 from ..io import native
@@ -88,7 +89,13 @@ class MainWindow(QMainWindow):
         v = QVBoxLayout(central)
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(0)
-        v.addWidget(self.canvas, 1)
+        from .view3d import View3D
+        self.view3d = View3D(self.controller)
+        self.view3d.status.connect(self._set_coords)
+        self.view_stack = QStackedWidget()
+        self.view_stack.addWidget(self.canvas)
+        self.view_stack.addWidget(self.view3d)
+        v.addWidget(self.view_stack, 1)
         self.layout_tabs = QTabBar()
         self.layout_tabs.setShape(QTabBar.Shape.RoundedSouth)
         self.layout_tabs.setExpanding(False)
@@ -241,6 +248,18 @@ class MainWindow(QMainWindow):
             Group("Manage", [Tool("PARAMETERS"), S("DELCONSTRAINT", "Delete"), S("CONSTRAINTBAR", "Show/Hide"),
                              S("CONSTRAINTSTATUS", "Status")]),
         ]
+        modeling = [
+            Group("Sketch", [Tool("SKETCH"), S("EDITSKETCH", "Edit Sketch"), S("EXITSKETCH", "Finish Sketch"),
+                             S("DELSKETCH", "Delete Sketch")]),
+            Group("Create", [Tool("EXTRUDE"), Tool("REVOLVE"), S("SWEEP"), S("LOFT"), S("PRESSPULL", "Press/Pull")]),
+            Group("Primitives", [Tool("BOX"), S("CYLINDER"), S("CONE"), S("SPHERE"), S("TORUS"), S("WEDGE")]),
+            Group("Combine", [Tool("UNION"), Tool("SUBTRACT"), S("INTERSECT")]),
+            Group("Edit Solids", [Tool("FILLETEDGE", label="Fillet\nEdge"), S("CHAMFEREDGE", "Chamfer Edge"),
+                                  S("SHELL"), S("SLICE"), S("3DMOVE", "3D Move"), S("3DROTATE", "3D Rotate")]),
+            Group("Inspect", [S("MASSPROP", "Mass Props"), S("FLATSHOT")]),
+            Group("View", [Tool("VIEW3D", label="3D\nView", then="SW Iso"), Tool("ORBIT"),
+                           Tool("PLAN", label="Plan\nView"), S("VSCURRENT", "Visual Style")]),
+        ]
         layout_tab = [
             Group("Layout", [Tool("LAYOUT", label="New\nLayout", then="N"), Tool("MVIEW", label="Viewport"),
                              Tool("PAGESETUP", label="Page\nSetup")]),
@@ -273,7 +292,8 @@ class MainWindow(QMainWindow):
             lay.addWidget(self.layer_combo)
             return w
         self.ribbon = Ribbon(REGISTRY, self.icons, [("Home", home), ("Annotate", annotate),
-                                                    ("Parametric", parametric), ("Layout", layout_tab),
+                                                    ("Parametric", parametric), ("3D", modeling),
+                                                    ("Layout", layout_tab),
                                                     ("Output", output), ("View", view)], app_menu,
                              special={"layer_combo": layer_widget})
         self.ribbon.tool_triggered.connect(self._ribbon_tool)
@@ -385,6 +405,9 @@ class MainWindow(QMainWindow):
         return PICKBOX_PX * self.controller.view.pixel
 
     def zoom_extents(self) -> None:
+        if self.in_3d:
+            self.view3d.zoom_extents()
+            return
         self.controller.zoom_extents()
 
     def zoom_window(self, p1, p2) -> None:
@@ -394,6 +417,10 @@ class MainWindow(QMainWindow):
         return self.controller.zoom_previous()
 
     def zoom_factor(self, factor: float) -> None:
+        if self.in_3d:
+            self.view3d.cam.zoom(factor)
+            self.view3d.invalidate()
+            return
         self.controller.zoom_factor(factor)
 
     def regen(self) -> None:
@@ -423,6 +450,20 @@ class MainWindow(QMainWindow):
         handlers["PARAMETERS"] = self.parameters_dialog
         handlers["CONSTRAINTBAR"] = self.toggle_constraint_display
         handlers["DIMSTYLE"] = self.dimstyle_dialog
+        if name.startswith("VIEW3D:"):
+            self.show_3d(name.split(":", 1)[1] or None)
+            return
+        if name.startswith("VSCURRENT:"):
+            self.show_3d(None)
+            self.view3d.set_style(name.split(":", 1)[1])
+            return
+        if name.startswith("PERSPECTIVE:"):
+            self.show_3d(None)
+            self.view3d.set_perspective(name.endswith("On"))
+            return
+        if name == "PLAN":
+            self.show_plan()
+            return
         if name.startswith("SHOWLAYOUT:"):
             self.show_space(name.split(":", 1)[1])
             return
@@ -447,6 +488,8 @@ class MainWindow(QMainWindow):
         self.ctx.selection.clear()
         self.ctx.last_point = None
         self.controller.set_document(doc, self.index)
+        self.view3d.set_document(doc)
+        self.show_plan()
         doc.add_listener(self._on_doc_change)
         self.autosave.discard_copy()
         self._refresh_all()
@@ -874,8 +917,8 @@ class MainWindow(QMainWindow):
 
     # ================================================================ refresh
     def _on_doc_change(self, doc, cs) -> None:
-        if "layout" in cs.tables or cs.reset:
-            if self.controller.space != "*Model" and self.controller.space not in doc.layouts:
+        if "layout" in cs.tables or "sketch" in cs.tables or cs.reset:
+            if self.controller.space != "*Model" and not self._space_exists(self.controller.space):
                 self.controller.set_space("*Model")
             self._refresh_layout_tabs()
         if cs.layers or cs.header or cs.reset:
@@ -897,6 +940,10 @@ class MainWindow(QMainWindow):
         tb.addTab("Model")
         tb.setTabData(0, "*Model")
         layouts = sorted(self.doc.layouts.values(), key=lambda lo: lo.order)
+        for name in sorted(self.doc.sketches):
+            i = tb.addTab("✎ " + name)
+            tb.setTabData(i, sketch_space(name))
+            tb.setTabToolTip(i, f"Sketch {name}: a drawing plane in 3D. Right-click to delete.")
         for lo in layouts:
             i = tb.addTab(lo.name)
             tb.setTabData(i, lo.name)
@@ -930,8 +977,35 @@ class MainWindow(QMainWindow):
             data = name
         self.show_space(data)
 
+    def _space_exists(self, space: str) -> bool:
+        return space == "*Model" or space in self.doc.layouts or (
+            is_sketch_space(space) and space[len(SKETCH_PREFIX):] in self.doc.sketches)
+
+    @property
+    def in_3d(self) -> bool:
+        return self.view_stack.currentWidget() is self.view3d
+
+    def show_3d(self, preset: str | None = None) -> None:
+        """Switch to the 3D view of the model (optionally to a standard view)."""
+        if self.controller.space != "*Model":
+            self.show_space("*Model")
+        first = not self.in_3d
+        self.view_stack.setCurrentWidget(self.view3d)
+        if preset:
+            self.view3d.set_view(preset)
+        elif first and not self.view3d.fitted:
+            self.view3d.zoom_extents()
+        self.view3d.invalidate()
+        self.view3d.setFocus()
+
+    def show_plan(self) -> None:
+        self.view_stack.setCurrentWidget(self.canvas)
+        self.canvas.setFocus()
+
     def show_space(self, space: str) -> None:
-        if space != "*Model" and space not in self.doc.layouts:
+        if space != "*Model" and hasattr(self, "view_stack"):
+            self.view_stack.setCurrentWidget(self.canvas)
+        if not self._space_exists(space):
             space = "*Model"
         self.controller.set_space(space)
         self._refresh_layout_tabs()
@@ -943,11 +1017,33 @@ class MainWindow(QMainWindow):
         if not name or name.startswith("+") or name == "*Model":
             return
         m = QMenu(self)
+        if is_sketch_space(name):
+            sk = name[len(SKETCH_PREFIX):]
+            m.addAction("Refresh reference lines").triggered.connect(lambda: self._refresh_sketch_ref(sk))
+            m.addAction("Delete sketch").triggered.connect(lambda: self._delete_sketch(sk))
+            m.exec(self.layout_tabs.mapToGlobal(pos))
+            return
         m.addAction("Rename…").triggered.connect(lambda: self._rename_layout(name))
         m.addAction("Page setup…").triggered.connect(lambda: (self.show_space(name), self.page_setup_dialog()))
         m.addSeparator()
         m.addAction("Delete").triggered.connect(lambda: self._delete_layout(name))
         m.exec(self.layout_tabs.mapToGlobal(pos))
+
+    def _refresh_sketch_ref(self, name: str) -> None:
+        from ..commands.sketch3d import refresh_reference
+        with self.doc.transaction("Refresh sketch"):
+            refresh_reference(self.doc, self.doc.sketches[name])
+
+    def _delete_sketch(self, name: str) -> None:
+        from ..commands.sketch3d import delete_sketch
+        if QMessageBox.question(self, "Delete sketch", f"Delete sketch {name} and what's drawn on it? "
+                                "Solids made from it stay.") != QMessageBox.StandardButton.Yes:
+            return
+        if self.controller.space == sketch_space(name):
+            self.controller.set_space("*Model")
+        with self.doc.transaction("Delete sketch"):
+            delete_sketch(self.doc, name)
+        self._refresh_layout_tabs()
 
     def _rename_layout(self, name: str) -> None:
         from ..core.layouts import rename_layout

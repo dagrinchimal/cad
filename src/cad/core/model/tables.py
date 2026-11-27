@@ -119,3 +119,42 @@ class Layout:
 
 
 _ = field
+
+
+SKETCH_PREFIX = "*Sketch:"
+
+
+def sketch_space(name: str) -> str:
+    return SKETCH_PREFIX + name
+
+
+def is_sketch_space(space: str) -> bool:
+    return space.startswith(SKETCH_PREFIX)
+
+
+@dataclass(frozen=True, slots=True)
+class Sketch:
+    """A drawing plane in 3D. Its 2D objects have space == "*Sketch:<name>"."""
+    name: str
+    origin: tuple = (0.0, 0.0, 0.0)
+    xdir: tuple = (1.0, 0.0, 0.0)
+    normal: tuple = (0.0, 0.0, 1.0)
+    visible: bool = True
+
+    @property
+    def space(self) -> str:
+        return sketch_space(self.name)
+
+    def plane(self):
+        from ..solids import Plane
+        return Plane(tuple(self.origin), tuple(self.xdir), tuple(self.normal))
+
+    def to_dict(self) -> dict:
+        return {"name": self.name, "origin": list(self.origin), "xdir": list(self.xdir), "normal": list(self.normal),
+                "visible": self.visible}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Sketch":
+        return cls(d["name"], tuple(float(v) for v in d.get("origin", (0, 0, 0))),
+                   tuple(float(v) for v in d.get("xdir", (1, 0, 0))), tuple(float(v) for v in d.get("normal", (0, 0, 1))),
+                   bool(d.get("visible", True)))

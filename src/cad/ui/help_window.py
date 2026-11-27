@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
 from ..commands import REGISTRY
 from ..help import library
 
-GROUP_ORDER = ["Draw", "Modify", "Annotation", "Block", "Groups", "Layers", "Parametric", "Layout", "Output",
+GROUP_ORDER = ["Draw", "Modify", "Annotation", "Block", "Groups", "Layers", "Parametric", "3D", "Layout", "Output",
                "View", "Utilities", "Edit", "Application"]
 TYPE_LABEL = {"command": "Command", "concept": "Guide", "tutorial": "Tutorial", "term": "Glossary",
               "home": "Help", "glossary": "Glossary", "commands": "Reference"}

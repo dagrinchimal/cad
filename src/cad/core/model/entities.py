@@ -119,6 +119,9 @@ def _to_json(v, kind: str):
         return [v.a, v.b, v.c, v.d, v.e, v.f]
     if kind == "floats":
         return list(v)
+    if kind == "brep":
+        from ..solids import to_brep
+        return to_brep(v)
     return v
 
 
@@ -144,6 +147,9 @@ def _from_json(v, kind: str):
         return Affine2(*[float(x) for x in v])
     if kind == "floats":
         return tuple(float(x) for x in v)
+    if kind == "brep":
+        from ..solids import from_brep
+        return from_brep(v)
     if kind == "float":
         return float(v)
     if kind == "int":
@@ -946,13 +952,63 @@ class UnknownEntity(Entity):
         return self
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Solid(Entity):
+    """A 3D solid body (OpenCascade shape). In the plan view it shows as its edges seen from above."""
+    TYPE: ClassVar[str] = "solid"
+    FIELDS: ClassVar[dict[str, str]] = {"shape": "brep", "name": "str"}
+    shape: object = None             # OCP TopoDS_Shape
+    name: str = ""
+
+    def primitives(self) -> list[Primitive]:
+        from ..solids import cached_plan_primitives
+        return cached_plan_primitives(self.shape)
+
+    def bbox(self) -> BBox | None:
+        from ..solids import bbox3
+        x0, y0, _, x1, y1, _ = bbox3(self.shape)
+        return (x0, y0, x1, y1)
+
+    def endpoints(self) -> list[Vec]:
+        from ..solids import vertices
+        seen, out = set(), []
+        for x, y, _ in vertices(self.shape):
+            k = (round(x, 9), round(y, 9))
+            if k not in seen:
+                seen.add(k)
+                out.append((x, y))
+        return out
+
+    def midpoints(self) -> list[Vec]:
+        return [p.mid for p in self.primitives() if isinstance(p, Seg)]
+
+    def centers(self) -> list[Vec]:
+        out = []
+        for p in self.primitives():
+            if isinstance(p, ArcPrim) and (round(p.c[0], 9), round(p.c[1], 9)) not in {(round(c[0], 9), round(c[1], 9)) for c in out}:
+                out.append(p.c)
+        return out
+
+    def grip_points(self) -> list[Vec]:
+        b = self.bbox()
+        return [((b[0] + b[2]) / 2, (b[1] + b[3]) / 2)] if b else []
+
+    def transformed(self, m: Affine2) -> "Solid":
+        from ..solids import affine2_matrix, transformed
+        return replace(self, shape=transformed(self.shape, affine2_matrix(m)))
+
+    def volume(self) -> float:
+        from ..solids import mass_properties
+        return mass_properties(self.shape)["volume"]
+
+
 def _props(e: Entity) -> dict:
     return {k: getattr(e, k) for k in COMMON_PROP_NAMES if k != "handle"} | {"handle": e.handle}
 
 
 ENTITY_TYPES: dict[str, type[Entity]] = {
     cls.TYPE: cls for cls in (Line, Circle, Arc, Polyline, Point, Ellipse, Spline, Text, MText, Hatch,
-                              Dimension, Leader, AttributeDefinition, BlockReference, Viewport, ArrayEntity)
+                              Dimension, Leader, AttributeDefinition, BlockReference, Viewport, ArrayEntity, Solid)
 }
 
 COMMON_PROP_NAMES = ("handle", "layer", "color", "linetype", "lineweight", "ltscale", "space")

@@ -13,7 +13,7 @@ from ..core.model import Document, Header, Layer, Linetype, entity_from_dict, en
 from ..core.model.tables import BlockDefinition, DimStyle, Group, Layout
 
 FORMAT_NAME = "cadz"
-FORMAT_VERSION = (1, 2, 0)   # 1.1: blocks, dimstyles, groups, layouts, constraints, new types; 1.2: associativity, arrays
+FORMAT_VERSION = (1, 3, 0)   # 1.1: blocks…, constraints; 1.2: associativity, arrays; 1.3: solids, sketches
 KNOWN_MEMBERS = {"manifest.json", "document.json", "thumbnail.png"}
 
 
@@ -61,6 +61,8 @@ def document_to_dict(doc: Document) -> dict:
         "groups": [g.to_dict() for g in doc.groups.values()],
         "layouts": [lo.to_dict() for lo in doc.layouts.values()],
     })
+    if doc.sketches:
+        d["sketches"] = [sk.to_dict() for sk in doc.sketches.values()]
     if doc.constraints:
         from ..core.constraints.model import constraints_to_list
         d["constraints"] = constraints_to_list(doc.constraints)
@@ -70,7 +72,7 @@ def document_to_dict(doc: Document) -> dict:
 def document_from_dict(data: dict) -> Document:
     doc = Document()
     known = {"header", "layers", "linetypes", "entities", "next_handle", "blocks", "dimstyles", "groups",
-             "layouts", "constraints"}
+             "layouts", "constraints", "sketches"}
     doc.extra = {k: v for k, v in data.items() if k not in known}
     doc.header = Header.from_dict(data.get("header", {}))
     layers = [Layer.from_dict(x) for x in data.get("layers", [])]
@@ -91,6 +93,10 @@ def document_from_dict(data: dict) -> Document:
     for ld in data.get("layouts", []):
         lo = Layout.from_dict(ld)
         doc.layouts[lo.name] = lo
+    from ..core.model.tables import SKETCH_PREFIX, Sketch
+    for sd in data.get("sketches", []):
+        sk = Sketch.from_dict(sd)
+        doc.sketches[sk.name] = sk
     if data.get("constraints"):
         from ..core.constraints.model import constraints_from_list
         doc.constraints = constraints_from_list(data["constraints"])
@@ -99,7 +105,10 @@ def document_from_dict(data: dict) -> Document:
         e = entity_from_dict(ed)
         if e.layer not in doc.layers:          # repair dangling references
             doc.layers[e.layer] = Layer(e.layer)
-        if e.space != "*Model" and e.space not in doc.layouts:
+        if e.space.startswith(SKETCH_PREFIX):
+            name = e.space[len(SKETCH_PREFIX):]
+            doc.sketches.setdefault(name, Sketch(name))
+        elif e.space != "*Model" and e.space not in doc.layouts:
             doc.layouts[e.space] = Layout(e.space, order=len(doc.layouts) + 1)
         doc.entities[e.handle] = e
     doc.next_handle = max(int(data.get("next_handle", 1)), max(doc.entities, default=0) + 1)
@@ -107,6 +116,38 @@ def document_from_dict(data: dict) -> Document:
         from dataclasses import replace
         doc.header = replace(doc.header, current_layer="0")
     return doc
+
+
+def _solid_dicts(data: dict):
+    for ed in data.get("entities", []):
+        if ed.get("type") == "solid":
+            yield ed
+    for bd in data.get("blocks", []):
+        for ed in bd.get("entities", []):
+            if ed.get("type") == "solid":
+                yield ed
+
+
+def _extract_breps(data: dict) -> dict[str, str]:
+    """Move each solid's BREP text out of document.json into solids/<n>.brep."""
+    out: dict[str, str] = {}
+    for i, ed in enumerate(_solid_dicts(data), 1):
+        text = ed.get("shape")
+        if isinstance(text, str):
+            name = f"solids/{ed.get('handle', 0)}_{i}.brep"
+            out[name] = text
+            ed["shape"] = {"file": name}
+    return out
+
+
+def _restore_breps(data: dict, z, names: set) -> None:
+    for ed in _solid_dicts(data):
+        ref = ed.get("shape")
+        if isinstance(ref, dict) and ref.get("file") in names:
+            ed["shape"] = z.read(ref["file"]).decode("ascii", errors="replace")
+        elif isinstance(ref, dict):
+            ed["type"] = "solid_missing"          # keeps the record; shown as an unknown object
+            ed["note"] = "3D data file missing from the drawing"
 
 
 def save(doc: Document, path: str, thumbnail_png: bytes | None = None) -> None:
@@ -123,6 +164,7 @@ def save(doc: Document, path: str, thumbnail_png: bytes | None = None) -> None:
     }
     data = document_to_dict(doc)
     data.pop("_created", None)
+    breps = _extract_breps(data)
     manifest_extra = getattr(doc, "manifest_extra", {})
     manifest = {**manifest_extra, **manifest}
 
@@ -135,6 +177,8 @@ def save(doc: Document, path: str, thumbnail_png: bytes | None = None) -> None:
             z.writestr("document.json", json.dumps(data, separators=(",", ":")))
             if thumbnail_png:
                 z.writestr("thumbnail.png", thumbnail_png)
+            for name, text in breps.items():
+                z.writestr(name, text)
             for name, blob in getattr(doc, "extra_members", {}).items():
                 z.writestr(name, blob)
         os.replace(tmp, path)
@@ -173,6 +217,7 @@ def load(path: str) -> tuple[Document, list[str]]:
                 f"This drawing comes from a newer version (format {_version_str(version)}). "
                 "Features this version doesn't know are kept and saved back unchanged.")
         data = _migrate(data, version)
+        _restore_breps(data, z, names)
         extra_members = {n: z.read(n) for n in names - KNOWN_MEMBERS}
     doc = document_from_dict(data)
     doc.extra["_created"] = manifest.get("created")

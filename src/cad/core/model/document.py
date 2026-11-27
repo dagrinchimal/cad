@@ -161,6 +161,7 @@ class Document:
         self.groups: dict[str, Group] = {}
         self.layouts: dict[str, Layout] = {}
         self.constraints: dict[int, object] = {}
+        self.sketches: dict[str, object] = {}       # name -> Sketch (3D drawing planes)
         self.next_handle: int = 1
         self.pre_commit_hooks: list = []      # fn(doc, tx) may add changes before a commit closes
         self._geo_cache: dict[int, tuple] = {}
@@ -315,9 +316,13 @@ class Document:
             self._geo_cache.pop(key, None)
         self.revision += 1
 
+    def _sketch_exists(self, space: str) -> bool:
+        from .tables import SKETCH_PREFIX
+        return space.startswith(SKETCH_PREFIX) and space[len(SKETCH_PREFIX):] in self.sketches
+
     def _table(self, name: str) -> dict:
         return {"block": self.blocks, "dimstyle": self.dimstyles, "group": self.groups,
-                "layout": self.layouts, "constraint": self.constraints}[name]
+                "layout": self.layouts, "constraint": self.constraints, "sketch": self.sketches}[name]
 
     # ------------------------------------------------------------ generic tables
     def set_item(self, table: str, key, value) -> None:
@@ -404,7 +409,7 @@ class Document:
                                        space=self.current_space)
         if entity.layer not in self.layers:
             raise DocumentError(f"Layer '{entity.layer}' does not exist")
-        if entity.space != MODEL_SPACE and entity.space not in self.layouts:
+        if entity.space != MODEL_SPACE and entity.space not in self.layouts and not self._sketch_exists(entity.space):
             raise DocumentError(f"Layout '{entity.space}' does not exist")
         handle = entity.handle if entity.handle and entity.handle not in self.entities else self.next_handle
         self.next_handle = max(self.next_handle, handle + 1)
