@@ -1,4 +1,4 @@
-# The .cadz file format (version 1.3.0)
+# The .cadz file format (version 1.4.0)
 
 A `.cadz` file is a standard ZIP archive. Rename it to `.zip` to look inside.
 
@@ -129,13 +129,18 @@ and loops are always current. Version 1.0 and 1.1 files open unchanged.
 
 | Where | Keys |
 |---|---|
-| `solid` (new type) | `name`, `shape: {"file": "solids/38_1.brep"}` — the exact shape (B-rep) in the named zip member, in mm, model coordinates. Solids are always in model space. |
+| `solid` (new type) | `name`, `hole` (1.4: true for a hole shape), `shape: {"file": "solids/38_1.brep"}` — the exact shape (B-rep) in the named zip member, in mm, model coordinates. Solids are always in model space. |
 | `sketches` (new table) | `[{name, origin: [x,y,z], xdir: [x,y,z], normal: [x,y,z], visible}]` — a drawing plane. Entities on it have `space: "*Sketch:<name>"` and 2D coordinates on the plane: model point = origin + x·xdir + y·(normal × xdir) |
 | `blocks[].description` | Drawing views (blocks named `View<n>`, made by VIEWBASE) hold `{"drawing_view": {view, scale, hidden, solids}}` as JSON so they can be regenerated; their entities are plain lines |
 
 BREP files are written by `BRepTools::Write` (OCCT 7.9 / 8.0, text format, triangulation stripped)
 and can be read by any OpenCascade-based program (FreeCAD: `Part.read`). A solid whose BREP member
 is missing loads as `solid_missing` and is kept, with a warning. Older files open unchanged.
+
+### Added in 1.4
+
+`hole` on solids (hole shapes for COMBINE). Version 1.3 files open unchanged (`hole` defaults to false);
+programs that only know 1.3 keep the key as an unknown field and show the shape as a normal solid.
 
 ## Compatibility rules
 

@@ -185,18 +185,33 @@ def smoke_3d(app, win) -> str:
     _pump(app, 200)
     img = win.view3d.render_image()
     assert img.pixelColor(img.width() // 2, img.height() // 2) != img.pixelColor(2, 2), "3D view is empty"
+    # easy 3D: drop a hole shape on the plate and combine
+    n_faces = len(S.faces(plate.shape))
+    win.drop_shape("Cylinder", True, (60.0, 40.0, 0.0))
+    win.ctx.selection.add(plate.handle)
+    win.runner.run("COMBINE")
+    (plate,) = [e for e in win.doc.entities.values() if isinstance(e, Solid)]
+    assert len(S.faces(plate.shape)) == n_faces + 1, "combine with a hole shape failed"
+    win.view3d.render_image()
     win.show_plan()
     win.doc.mark_saved()
-    return f"3D: solids, STEP/STL/glTF/3MF OK, 3D view renderer={win.view3d.renderer.name}"
+    return f"3D: solids, easy 3D, STEP/STL/glTF/3MF OK, 3D view renderer={win.view3d.renderer.name}"
 
 
 def take_screenshot_3d(app: QApplication, win, path: str) -> int:
     win.resize(1500, 920)
     _pump(app, 300)
     demo_part(win)
+    win.drop_shape("Cylinder", True, (60.0, 40.0, 20.0))      # a hole shape on top, selected with its handles
     win.ribbon.tabbar.setCurrentIndex(3)
     win.show_3d("SE Iso")
     _pump(app, 300)
+    v = win.view3d
+    import numpy as np
+    v.cam.width, v.cam.height = v.width(), v.height()
+    (pt,), _ = v.cam.project(np.array([(100.0, 20.0, 20.0)]))
+    v._context_tools(float(pt[0]), float(pt[1]))
+    _pump(app, 100)
     win.view3d.repaint()
     _pump(app, 100)
     win.grab().save(path)

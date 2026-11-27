@@ -10,6 +10,7 @@ A tutorial's ```commands blocks hold one input per line:
   <units mm|fractional|architectural>
   <layer NAME [color] [lineweight]>   create the layer if needed and make it current
   <dimscale N>    dimension style overall scale
+  <hint ...>      a ghost outline shown by the help window (see help/hints.py); skipped here
 """
 from __future__ import annotations
 
@@ -104,13 +105,20 @@ def _do(r: CommandRunner, doc: Document, line: str) -> None:
             raise TutorialError(f"{line!r} was refused: {ctx.messages[before:] or ctx.messages[-3:]}")
         return
     tok, arg = m.group(1).lower(), m.group(2).strip()
+    if tok == "hint":
+        from .hints import hint_polylines
+        hint_polylines(line)              # only shown in the help window; must parse
+        return
     if tok == "enter":
         if isinstance(r.request, GetSelection):
             r.submit_selection(set(ctx.selection))
         else:
             r.submit_enter()
     elif tok == "esc":
-        r.cancel()
+        if r.is_active:
+            r.cancel()
+        else:
+            ctx.selection.clear()          # like the window: Esc with no command clears the selection
     elif tok == "units":
         with doc.transaction("units"):
             doc.set_header(replace(doc.header, units=doc.header.units.with_mode(UNIT_MODES[arg.lower()])))

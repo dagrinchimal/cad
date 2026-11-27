@@ -281,7 +281,8 @@ def pick_area(ctx: CommandContext, pt):
     prims = []
     for h in ctx.index.query(rect):
         e = doc.entities.get(h)
-        if e is None or not doc.is_visible(e) or e.TYPE in ("hatch", "text", "mtext", "dimension", "leader", "point", "solid"):
+        if e is None or not doc.is_visible(e) or e.layer == "Sketch reference" or \
+                e.TYPE in ("hatch", "text", "mtext", "dimension", "leader", "point", "solid"):
             continue
         prims.extend(doc.geometry(e).prims(snappable_only=True))
     if len(prims) > 60_000:

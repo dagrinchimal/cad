@@ -369,6 +369,23 @@ def face_plane(face) -> Plane | None:
     return Plane.make(c, n, (x.X(), x.Y(), x.Z()))
 
 
+def aligned_face_plane(face) -> Plane | None:
+    """The plane of a flat face, laid out so typed coordinates read naturally: on a horizontal face
+    x, y are the model's x, y; on a wall x runs along the wall and y goes up."""
+    pl = face_plane(face)
+    if pl is None:
+        return None
+    n = np.array(pl.normal, float)
+    o = np.array(pl.origin, float)
+    if abs(n[2]) > 0.99:
+        xd = np.array([1.0, 0, 0])
+    else:
+        xd = np.cross([0, 0, 1.0], n)
+        xd /= np.linalg.norm(xd)
+    origin = n * (o @ n)                        # the world origin dropped onto the plane
+    return Plane(tuple(float(v) for v in origin), tuple(float(v) for v in xd), tuple(float(v) for v in n))
+
+
 # ====================================================================== making solids
 def extrude(face, distance: float, direction: Vec3 | None = None, both: bool = False) -> TopoDS_Shape:
     """Extrude a face along its normal (or `direction`)."""
@@ -622,6 +639,27 @@ def transformed(shape, m4: np.ndarray) -> TopoDS_Shape:
     return BRepBuilderAPI_Transform(shape, trsf, True).Shape()
 
 
+def scaled(shape, factors: Vec3, about: Vec3) -> TopoDS_Shape:
+    """Stretch by different amounts along X, Y and Z about a point (circles may become ellipses)."""
+    sx, sy, sz = (float(f) for f in factors)
+    if min(sx, sy, sz) <= 1e-9:
+        raise SolidError("Sizes must stay above zero.")
+    if abs(sx - sy) < 1e-12 and abs(sy - sz) < 1e-12:
+        m = np.eye(4) * sx
+        m[3, 3] = 1
+        m[:3, 3] = np.array(about) * (1 - sx)
+        return transformed(shape, m)
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_Copy, BRepBuilderAPI_GTransform
+    from OCP.gp import gp_GTrsf, gp_Mat, gp_XYZ
+    shape = BRepBuilderAPI_Copy(shape, True, False).Shape()     # without its display mesh: GTransform
+    g = gp_GTrsf()                                                # of a meshed shape comes out empty
+    g.SetVectorialPart(gp_Mat(sx, 0, 0, 0, sy, 0, 0, 0, sz))
+    ax, ay, az = about
+    g.SetTranslationPart(gp_XYZ(ax * (1 - sx), ay * (1 - sy), az * (1 - sz)))
+    out = BRepBuilderAPI_GTransform(shape, g, True).Shape()
+    return clean(out)
+
+
 def translate(shape, d: Vec3) -> TopoDS_Shape:
     m = np.eye(4)
     m[:3, 3] = d
@@ -651,8 +689,8 @@ def affine2_matrix(m) -> np.ndarray:
 # ====================================================================== measuring
 def mass_properties(shape) -> dict:
     vp, sp = GProp_GProps(), GProp_GProps()
-    BRepGProp.VolumeProperties_s(shape, vp)
-    BRepGProp.SurfaceProperties_s(shape, sp)
+    BRepGProp.VolumeProperties_s(shape, vp, 1e-7, False)      # adaptive: exact for B-splines too
+    BRepGProp.SurfaceProperties_s(shape, sp, 1e-7, False)
     c = vp.CentreOfMass()
     return {"volume": vp.Mass(), "area": sp.Mass(), "centroid": (c.X(), c.Y(), c.Z()), "bbox": bbox3(shape)}
 
@@ -666,7 +704,7 @@ def center_of(shape) -> Vec3:
 
 def bbox3(shape) -> tuple[float, float, float, float, float, float]:
     b = Bnd_Box()
-    BRepBndLib.Add_s(shape, b, False)
+    BRepBndLib.AddOptimal_s(shape, b, False, False)     # tight box (Add_s uses B-spline poles)
     if b.IsVoid():
         return (0, 0, 0, 0, 0, 0)
     lo, hi = b.CornerMin(), b.CornerMax()          # (Get() differs between OCP versions)

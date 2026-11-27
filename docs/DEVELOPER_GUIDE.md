@@ -111,6 +111,10 @@ no page or a link is broken, and checks that common questions find the right pag
 - OCP 8 moved arrays and maps to `OCP.collections` and renamed some statics; `solids.py` has the
   compatibility imports. `Bnd_Box.Get()` is broken in OCP 8: use `CornerMin/CornerMax`.
 - Set `CAD_RENDERER_3D=software` to force the QPainter 3D renderer.
+- Give a new command's `GetDistance` a `drag_axis=(point, direction)` (and `preview3d=lambda d: shape`) and it
+  can be dragged in the 3D view. Use `GetFace(allow_region=True)` to also accept closed drawn shapes.
+- `tests/integration/test_easy3d_gui.py` drives the 3D view through `View3D.press/move_to/release/click`
+  with screen points from `cam.project`, so drags are tested without real mouse events.
 - 3D formats live in `plugins/formats/solid3d.py`; `tests/plugins/test_3d_formats.py` re-reads mesh
   exports with trimesh and exact ones with OpenCascade (and FreeCAD when installed).
 

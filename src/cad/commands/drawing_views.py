@@ -57,7 +57,7 @@ def _ensure_layers(doc) -> None:
 def view_entities(doc, settings: dict) -> tuple[list, tuple[float, float]]:
     """Projected lines (full size) for the view, centered on (0, 0), and the view's size."""
     handles = settings.get("solids")
-    sols = [s for s in visible_solids(doc) if handles is None or s.handle in handles]
+    sols = [s for s in visible_solids(doc) if (handles is None or s.handle in handles) and not s.hole]
     if not sols:
         return [], (0.0, 0.0)
     shape = sols[0].shape if len(sols) == 1 else S.compound([s.shape for s in sols])
@@ -147,7 +147,7 @@ def _sheet_space(ctx: CommandContext):
                    "front top side"))
 def viewbase_cmd(ctx: CommandContext):
     doc = ctx.doc
-    sols = visible_solids(doc)
+    sols = [s for s in visible_solids(doc) if not s.hole]
     if not sols:
         ctx.echo("There are no solids to draw. Make some first (EXTRUDE, BOX…).")
         return

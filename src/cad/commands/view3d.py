@@ -52,3 +52,11 @@ def vscurrent_cmd(ctx: CommandContext):
                          default="Shaded with edges", default_text="Shaded with edges")
     if v in STYLES:
         ctx.ui.run_ui_action("VSCURRENT:" + v)
+
+
+@command("SHAPESPANEL", label="Shapes Panel", aliases=("SHAPES",), group="3D", transaction=False,
+         description="Show or hide the Shapes panel: drag boxes, cylinders and hole shapes into the 3D view.",
+         keywords=("shape library", "basic shapes", "tinkercad", "parts bin"))
+def shapespanel_cmd(ctx: CommandContext):
+    ctx.ui.run_ui_action("SHAPESPANEL")
+    yield from ()

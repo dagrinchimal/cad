@@ -25,6 +25,8 @@ class SolidItem:
     tri_face: np.ndarray
     edges: list                    # (k,3) arrays
     rgb: tuple
+    hole: bool = False             # see-through grey "hole shape"
+    alpha: float = 1.0             # < 1 for holes and live previews
 
 
 @dataclass
@@ -77,7 +79,7 @@ class Scene3DBuilder:
                 continue
             alive.add(h)
             hit = self._cache.get(h)
-            key = (e, self._rgb(e))
+            key = (e, self._rgb(e), getattr(e, "hole", False))
             if hit is not None and hit[0] == key:
                 item = hit[1]
             else:
@@ -103,7 +105,8 @@ class Scene3DBuilder:
             except Exception:       # a broken shape shouldn't break the view
                 return None
             return SolidItem(e.handle, m.vertices.astype(float), m.normals.astype(float), m.triangles,
-                             m.tri_face, [np.asarray(x, float) for x in m.edges], self._rgb(e))
+                             m.tri_face, [np.asarray(x, float) for x in m.edges],
+                             (0.70, 0.76, 0.86) if e.hole else self._rgb(e), e.hole, 0.3 if e.hole else 1.0)
         sketch = e.space[len(SKETCH_PREFIX):] if is_sketch_space(e.space) else ""
         plane = None
         if sketch:
@@ -131,6 +134,16 @@ class Scene3DBuilder:
         if not lines:
             return None
         return WireItem(e.handle, lines, self._rgb(e), sketch)
+
+
+def item_from_shape(shape, rgb=(1.0, 0.75, 0.25), alpha: float = 0.55, handle: int = -1) -> SolidItem | None:
+    """A transient item (live preview while dragging)."""
+    try:
+        m = S.mesh(shape)
+    except Exception:
+        return None
+    return SolidItem(handle, m.vertices.astype(float), m.normals.astype(float), m.triangles, m.tri_face,
+                     [np.asarray(x, float) for x in m.edges], rgb, False, alpha)
 
 
 def edge_segments(lines: list) -> np.ndarray:

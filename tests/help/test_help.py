@@ -146,3 +146,23 @@ def test_machined_part_tutorial_goes_3d(lib):
     views = sorted(view_settings(doc.blocks[e.name])["view"] for e in doc.entities.values()
                    if isinstance(e, BlockReference) and e.name in doc.blocks and view_settings(doc.blocks[e.name]))
     assert views == ["Front", "SE Iso", "Top"]
+
+
+def test_easy_3d_tutorial_builds_the_pencil_holder(lib):
+    import math
+    from cad.core import solids as S
+    from cad.core.model import Solid
+    doc, msgs = run_tutorial(lib.get("tutorial-easy-3d").body)
+    (part,) = [e for e in doc.entities.values() if isinstance(e, Solid)]
+    assert not part.hole
+    expect = 80 * 40 * 30 - 3 * math.pi * 8 ** 2 * 25 - 70 * 6 * 4
+    assert S.mass_properties(part.shape)["volume"] == pytest.approx(expect, rel=1e-6)
+
+
+def test_tutorial_hints_show_as_links_not_steps(lib):
+    md = lib.markdown(lib.get("tutorial-easy-3d"))
+    assert "<hint" not in md
+    assert "(hint:tutorial-easy-3d/1)" in md and "(hint:clear)" in md
+    polys = lib.hints_for("tutorial-easy-3d/1")
+    assert len(polys) == 6 and polys[0][0] == (0.0, 0.0, 0.0)
+    assert lib.hints_for("tutorial-easy-3d/0") == []

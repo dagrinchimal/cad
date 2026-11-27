@@ -35,6 +35,7 @@ def commands_markdown() -> str:
 
 class HelpWindow(QWidget):
     run_command = Signal(str)
+    hints_requested = Signal(list)       # tutorial ghost outlines (3D polylines)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent, Qt.WindowType.Window)
@@ -247,5 +248,7 @@ class HelpWindow(QWidget):
                 self.show_page(t.id)
         elif scheme == "run":
             self.run_command.emit(target)
+        elif scheme == "hint":
+            self.hints_requested.emit([] if target == "clear" else (self.lib.hints_for(target) or []))
         elif scheme in ("http", "https"):
             QDesktopServices.openUrl(url)

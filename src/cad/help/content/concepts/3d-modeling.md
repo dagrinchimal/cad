@@ -9,6 +9,14 @@ glossary: [solid, sketch, extrude, profile, drawing view]
 ---
 3D here is **direct modeling**: you make solids and then edit them directly — extrude, cut, round edges, push faces. There's no feature history to manage; what you see is the part.
 
+## The easy way (no sketching)
+1. Go to the 3D view and drag shapes in from the [Shapes panel](help:shapespanel).
+2. Click a shape and drag its handles to size it (or click a size and type it); drag it to move it. [Align](help:alignobjects) lines things up.
+3. Use grey **hole shapes** where you want material removed, then select everything and [Combine](help:combine).
+4. Draw on a face and [Press/Pull](help:presspull) it in or out for pockets, slots and bosses.
+
+The [pencil holder tutorial](help:tutorial-easy-3d) walks through it in 10 minutes. Everything can also be typed.
+
 ## The basic workflow
 1. **Draw outlines** in the plan or on a [sketch](help:sketch) (a drawing plane in 3D: top, front, side, offset, or on a face of a solid). All the 2D tools work on sketches, including constraints.
 2. **Make solids** with [Extrude](help:extrude), [Revolve](help:revolve), [Sweep](help:sweep) or [Loft](help:loft), or start from a [Box](help:box), [Cylinder](help:cylinder) and friends.

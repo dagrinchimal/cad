@@ -17,6 +17,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Generator, Iterable, Protocol
 
+import numpy as np
+
 from rapidfuzz import fuzz, process
 
 from ..core.geom2d.vec import Vec, dist, polar
@@ -91,6 +93,8 @@ class GetDistance(Request):
     base: Vec | None = None
     preview: PreviewFn | None = None
     positive: bool = True
+    drag_axis: tuple | None = None     # (origin xyz, direction xyz): the 3D view lets you drag along it
+    preview3d: Callable | None = None  # distance -> a shape to show while dragging (or None)
 
 
 @dataclass(slots=True)
@@ -131,6 +135,7 @@ class GetFace(Request):
     A click in the plan view looks straight down; in the 3D view along the line of sight; typing x,y,z
     takes the face nearest that point."""
     planar_only: bool = False
+    allow_region: bool = False         # a click inside a closed area on the ground/a sketch answers a RegionPick
 
 
 @dataclass(slots=True)
@@ -201,6 +206,7 @@ class CommandContext:
     last_point: Vec | None = None
     point_z: float = 0.0              # elevation of the last point (typed x,y,z or a click on a solid)
     pick_ray: tuple | None = None     # the 3D view sets (origin, direction) of the last click
+    pending_picks: list = field(default_factory=list)   # faces/edges picked before the command (3D toolbar)
     space: str = "*Model"
     constraints: object = None                             # ConstraintManager (set by the UI / tests)
     memory: dict = field(default_factory=dict)            # per-command remembered values
@@ -480,6 +486,13 @@ class CommandRunner:
             return
         self.request = req
         self.ctx.doc.flush()
+        if isinstance(req, (GetFace, GetEdge)) and self.ctx.pending_picks:
+            pick = self.ctx.pending_picks.pop(0)
+            if isinstance(req, GetEdge) and not hasattr(pick, "edge") or isinstance(req, GetFace) and hasattr(pick, "edge"):
+                self.ctx.pending_picks.clear()           # wrong kind: ask normally
+            else:
+                self._send(pick)
+                return
         if isinstance(req, GetSelection) and req.use_pickfirst and self.ctx.selection:
             sel = set(self.ctx.selection)
             self.ctx.selection.clear()
@@ -526,6 +539,16 @@ class CommandRunner:
         doc = self.ctx.doc
         if isinstance(req, GetFace):
             hit = SP.pick_face(doc, *ray) if ray is not None else SP.face_near(doc, point3)
+            if req.allow_region and ray is not None:
+                from ..core.regions3d import region_at_ray
+                o, d = np.asarray(ray[0], float), np.asarray(ray[1], float)
+                face_t = None
+                if hit is not None:
+                    face_t = float((np.asarray(hit.point) - o) @ (d / np.linalg.norm(d)))
+                reg = region_at_ray(doc, o, d, None if face_t is None else face_t + 1e-6 * max(1.0, abs(face_t)))
+                if reg is not None:
+                    self._send(reg[1])
+                    return
             if hit is None:
                 self.ctx.echo("No solid face there.")
                 return
@@ -587,6 +610,11 @@ class CommandRunner:
             return False
         self._send((e, pt))
         return True
+
+    def submit_value(self, value: float) -> None:
+        """A number given by dragging in the 3D view (GetDistance/GetNumber/GetAngle)."""
+        if isinstance(self.request, (GetDistance, GetNumber, GetAngle)):
+            self._send(float(value))
 
     def submit_selection(self, handles: set[int]) -> None:
         if isinstance(self.request, GetSelection):

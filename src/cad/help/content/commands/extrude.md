@@ -12,7 +12,7 @@ Turns closed outlines into solids by giving them height. It can also add to a so
 ## How to use
 1. Draw a closed outline: a [rectangle](help:rectang), [circle](help:circle), closed polyline, or any closed shape on a [sketch](help:sketch).
 2. Start **Extrude** and select the outlines, then press Enter. Or type `A` (**Area**) and click inside areas, like [Hatch](help:hatch): holes inside the area are kept as holes.
-3. Type the height (or click two points). A negative height goes the other way.
+3. Type the height, or in the 3D view move the mouse and click (a live preview shows the result). A negative height goes the other way.
 
 ## Options
 - **Area** (`A`): click inside closed areas formed by any lines. The outlines stay in your drawing.

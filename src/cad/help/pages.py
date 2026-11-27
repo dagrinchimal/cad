@@ -16,7 +16,7 @@ GROUP_PLACE = {
     "Block": "Home tab › Block", "Groups": "Home tab › Block", "Utilities": "Home tab › Utilities",
     "Annotation": "Annotate tab", "Parametric": "Parametric tab", "Layout": "Layout tab",
     "Output": "Output tab", "View": "View tab", "Application": "File menu (top left)",
-    "Edit": "Quick access: Ctrl+Z / Ctrl+Y",
+    "Edit": "Quick access: Ctrl+Z / Ctrl+Y", "3D": "3D tab",
 }
 
 
@@ -131,6 +131,17 @@ class HelpLibrary:
         c = REGISTRY.get(name)
         return self.get(c.help_id) if c else None
 
+    def hints_for(self, target: str):
+        """Polylines of hint link 'page-id/block' (None if there's no such block)."""
+        from .hints import block_hints
+        pid, _, idx = target.partition("/")
+        page = self.get(pid)
+        if page is None or not idx.isdigit():
+            return None
+        blocks = block_hints(page.body)
+        i = int(idx)
+        return blocks[i] if i < len(blocks) else None
+
     def of_type(self, kind: str) -> list[Page]:
         return sorted((p for p in self.pages.values() if p.type == kind), key=lambda p: (p.order, p.title.lower()))
 
@@ -149,6 +160,8 @@ class HelpLibrary:
             return self.term(target) is not None or self.get(f"term/{target}") is not None
         if scheme == "run":
             return REGISTRY.get(target) is not None
+        if scheme == "hint":
+            return target == "clear" or self.hints_for(target) is not None
         if scheme in ("http", "https"):
             return True
         return False
@@ -176,7 +189,11 @@ class HelpLibrary:
                 out += ["Also called: " + ", ".join(page.synonyms), ""]
             out += ["[All glossary terms](help:glossary)"]
             return "\n".join(out)
-        out.append(page.body)
+        if page.type == "tutorial":
+            from .hints import display_markdown
+            out.append(display_markdown(page.id, page.body))
+        else:
+            out.append(page.body)
         if page.glossary:
             items = []
             for g in page.glossary:

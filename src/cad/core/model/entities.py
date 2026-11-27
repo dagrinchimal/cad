@@ -956,9 +956,10 @@ class UnknownEntity(Entity):
 class Solid(Entity):
     """A 3D solid body (OpenCascade shape). In the plan view it shows as its edges seen from above."""
     TYPE: ClassVar[str] = "solid"
-    FIELDS: ClassVar[dict[str, str]] = {"shape": "brep", "name": "str"}
+    FIELDS: ClassVar[dict[str, str]] = {"shape": "brep", "name": "str", "hole": "bool"}
     shape: object = None             # OCP TopoDS_Shape
     name: str = ""
+    hole: bool = False               # a "hole shape": cuts the solids it's combined with (COMBINE)
 
     def primitives(self) -> list[Primitive]:
         from ..solids import cached_plan_primitives

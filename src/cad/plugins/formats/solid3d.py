@@ -36,7 +36,8 @@ _quiet_occt()
 
 
 def _solids(doc: Document) -> list[Solid]:
-    return [e for e in doc.entities.values() if isinstance(e, Solid) and e.space == MODEL_SPACE and doc.is_visible(e)]
+    return [e for e in doc.entities.values()
+            if isinstance(e, Solid) and e.space == MODEL_SPACE and doc.is_visible(e) and not e.hole]
 
 
 def _need_solids(doc: Document, report: Report) -> list[Solid]:
@@ -45,6 +46,9 @@ def _need_solids(doc: Document, report: Report) -> list[Solid]:
         raise PluginError("This drawing has no 3D solids to export. Make some with EXTRUDE, BOX, etc., "
                           "or export to DXF/PDF for 2D drawings.")
     others = sum(1 for e in doc.entities.values() if not isinstance(e, Solid))
+    holes = sum(1 for e in doc.entities.values() if isinstance(e, Solid) and e.hole)
+    if holes:
+        report.warn(f"{holes} hole shape(s) weren't exported: Combine them with a solid to cut it.")
     if others:
         report.warn(f"{others} 2D object(s) were left out: this format holds only 3D solids.")
     return sols

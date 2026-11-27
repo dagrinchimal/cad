@@ -30,11 +30,12 @@ A friendly 2D/3D CAD program for Windows with AutoCAD-style commands, three unit
 - **Interface:** ribbon (Home, Annotate, Parametric, 3D, Layout, Output, View) with icons and labels, command line that doubles as search, status bar, context menus, Properties panel for every object type, light/dark themes, adjustable UI size
 - **Speed:** GPU rendering; tested with 50,000+ objects
 - **3D solids (direct modeling):** sketches on the top/front/side planes, offset planes or a face of a solid, using every 2D tool and constraint; Extrude (with Join, Cut, Through all, Both sides, or click inside areas), Revolve, Sweep, Loft; Box, Cylinder, Cone, Sphere, Torus, Wedge; Union, Subtract, Intersect; Fillet and Chamfer edges, Shell, Slice, Press/Pull, 3D Move/Rotate; Mass Properties
-- **3D view:** orbit, pan, zoom, standard and isometric views, perspective, five visual styles; click faces, edges and points on solids for any command
+- **3D view:** orbit, pan, zoom, view cube, standard and isometric views, perspective, five visual styles; click faces, edges and points on solids for any command
+- **Easy 3D (Tinkercad/SketchUp style):** drag shapes from the Shapes panel, stretch them with handles or type sizes, grey hole shapes + Combine, Align; draw right on a face and push/pull it with a live preview; a toolbar shows the tools for what you clicked. Every action can still be typed
 - **2D drawings from 3D:** front/top/side/iso views on a layout with hidden lines dashed (third-angle), updated after edits
 - **3D files:** STEP (with colors and names) and IGES open and save; STL opens and saves; 3MF, glTF (.glb) and OBJ export
 
-- **Help (F1):** a page for every command, guides (units, snaps, selecting, layouts, file formats, constraints, coming from AutoCAD), a glossary of 70+ CAD words, and two tutorials (a floor plan in feet-inches; a machined part in mm, taken from 2D to a 3D solid, shop drawings and STEP). Search in your own words with typo tolerance ("copy in a circle", "make a wall thicker"); F1 opens the page of the command you're in or the ribbon button under the mouse; ▶ Start buttons run the command
+- **Help (F1):** a page for every command, guides (units, snaps, selecting, layouts, file formats, constraints, coming from AutoCAD), a glossary of 70+ CAD words, and three tutorials (a floor plan in feet-inches; a machined part in mm, taken from 2D to a 3D solid, shop drawings and STEP; a drag-and-drop 3D pencil holder with "Show me where" hints). Search in your own words with typo tolerance ("copy in a circle", "make a wall thicker"); F1 opens the page of the command you're in or the ribbon button under the mouse; ▶ Start buttons run the command
 
 Not yet: the Windows installer and signed release (Phase 7).
 

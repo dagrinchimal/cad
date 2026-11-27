@@ -271,3 +271,92 @@ def test_viewbase_and_update(r):
     lines = doc.blocks[front.name].entities
     xs = [p for e in lines if isinstance(e, Line) for p in (e.p1[0], e.p2[0])]
     assert max(xs) - min(xs) == pytest.approx(60)
+
+
+# ---------------------------------------------------------------- Phase 6b: easy 3D
+def test_dropshape_hole_combine(r):
+    go(r, "DROPSHAPE", "Box", (0, 0), "")
+    go(r, "DROPSHAPE", "H", "Cylinder", "0,0,0", "")
+    box, hole = sorted(solids(r), key=lambda e: e.hole)
+    assert hole.hole and hole.color == 8 and box.name == "Box"
+    assert vol(box) == pytest.approx(8000)
+    assert r.ctx.selection == {hole.handle}       # the new shape is selected, ready for its handles
+    r.ctx.selection.add(box.handle)
+    go(r, "COMBINE")
+    (s,) = solids(r)
+    assert not s.hole and vol(s) == pytest.approx(8000 - math.pi * 100 * 20, rel=1e-6)
+
+
+def test_makehole_makesolid(r):
+    go(r, "BOX", (0, 0), (10, 10), "10")
+    (s,) = solids(r)
+    go(r, "MAKEHOLE", {s.handle})
+    assert r.ctx.doc.get(s.handle).hole
+    go(r, "MAKESOLID", {s.handle})
+    assert not r.ctx.doc.get(s.handle).hole
+
+
+def test_alignobjects(r):
+    go(r, "BOX", (0, 0), (10, 10), "10")
+    go(r, "BOX", (30, 5), (40, 25), "30")
+    a, b = solids(r)
+    go(r, "ALIGNOBJECTS", {a.handle, b.handle}, "Y", "Center")
+    ya = S.bbox3(r.ctx.doc.get(a.handle).shape)
+    yb = S.bbox3(r.ctx.doc.get(b.handle).shape)
+    assert (ya[1] + ya[4]) / 2 == pytest.approx((yb[1] + yb[4]) / 2)
+    go(r, "ALIGNOBJECTS", {a.handle, b.handle}, "Z", "Max")
+    assert S.bbox3(r.ctx.doc.get(a.handle).shape)[5] == pytest.approx(30)
+
+
+def test_presspull_region_on_top_face_pushes_pocket(r):
+    r.ctx.ui = Ui()
+    go(r, "BOX", (0, 0), (40, 40), "10")
+    go(r, "SKETCH", "Offset", "XY", "10")
+    (sk,) = r.ctx.doc.sketches.values()
+    r.ctx.space = sk.space
+    r.ctx.index.space = sk.space
+    with r.ctx.doc.transaction("c"):
+        r.ctx.doc.add(Circle(center=(20, 20), radius=5, space=sk.space))
+    r.ctx.space = r.ctx.index.space = "*Model"
+    go(r, "PRESSPULL", (20, 20), "-4")          # click inside the circle from above: a region on the sketch
+    (s,) = solids(r)
+    assert vol(s) == pytest.approx(16000 - math.pi * 25 * 4, rel=1e-6)
+    go(r, "PRESSPULL", (20, 20), "6")           # now the pocket floor is the top-most thing there? no: region again
+    assert len(solids(r)) == 1
+
+
+def test_presspull_region_on_ground_makes_solid(r):
+    seed(r.ctx.doc, rect(0, 0, 10, 10))
+    go(r, "PRESSPULL", (5, 5), "7")
+    (s,) = solids(r)
+    assert vol(s) == pytest.approx(700)
+
+
+def test_pending_picks_feed_face_requests(r):
+    from cad.core.solid_pick import FacePick
+    go(r, "BOX", (0, 0), (10, 10), "10")
+    (s,) = solids(r)
+    top = max(range(len(S.faces(s.shape))), key=lambda i: S.center_of(S.faces(s.shape)[i])[2])
+    r.ctx.pending_picks.append(FacePick(s, top, (5, 5, 10)))
+    go(r, "PRESSPULL", "3")
+    assert vol(solids(r)[0]) == pytest.approx(1300)
+
+
+def test_scaled_box():
+    b = S.box((0, 0, 0), (10, 10, 10))
+    s2 = S.scaled(b, (2, 1, 0.5), (0, 0, 0))
+    assert S.bbox3(s2) == pytest.approx((0, 0, 0, 20, 10, 5), abs=1e-6)
+
+
+def test_dropshape_size_option_and_size3d(r):
+    go(r, "DROPSHAPE", "Box", "S", "80,40,30", "40,20,0", "")
+    (b,) = solids(r)
+    assert S.bbox3(b.shape) == pytest.approx((0, 0, 0, 80, 40, 30), abs=1e-6)
+    r.ctx.selection.clear()
+    go(r, "DROPSHAPE", "H", "CY", "S", "16,16,30", "20,20,5", "")
+    hole = next(e for e in solids(r) if e.hole)
+    assert S.bbox3(hole.shape) == pytest.approx((12, 12, 5, 28, 28, 35), abs=1e-6)
+    assert vol(hole) == pytest.approx(math.pi * 64 * 30, rel=1e-6)
+    r.ctx.selection.clear()
+    go(r, "SIZE3D", {b.handle}, "100,40,20")
+    assert S.bbox3(r.ctx.doc.get(b.handle).shape) == pytest.approx((0, 0, 0, 100, 40, 20), abs=1e-6)

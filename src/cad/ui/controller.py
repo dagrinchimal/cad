@@ -304,12 +304,22 @@ class CanvasController(QObject):
     def selection_target(self) -> set[int]:
         return self.pending_sel if isinstance(self.runner.request, GetSelection) else self.runner.ctx.selection
 
+    def set_hints(self, polylines) -> None:
+        """Tutorial hint outlines (model coordinates), drawn dashed orange on top."""
+        self.hints = [Polyline(vertices=tuple((x, y, 0.0) for x, y in pl), closed=False, linetype="DASHED")
+                      for pl in polylines if len(pl) >= 2]
+        self.update_highlight()
+
     def update_highlight(self, invalidate: bool = True) -> None:
         import numpy as np
         sel = self.runner.ctx.selection | self.pending_sel
         ents = [self.doc.entities[h] for h in sel if h in self.doc.entities]
         segs, tris = self.builder.build_entities(ents, self.opts)
         seg_parts = [solid_color_instances(segs, self.highlight_rgba, 2.0)] if len(segs) else []
+        if getattr(self, "hints", None) and self.space == MODEL_SPACE:
+            hs, _ = self.builder.build_entities(self.hints, self.opts)
+            if len(hs):
+                seg_parts.append(solid_color_instances(hs, (1.0, 0.55, 0.0, 1.0), 2.0))
         tri_parts = [solid_color_tris(tris, self.highlight_rgba)] if len(tris) else []
         if self.hover is not None and self.hover not in sel and self.hover in self.doc.entities:
             hs, ht = self.builder.build_entities([self.doc.entities[self.hover]], self.opts)

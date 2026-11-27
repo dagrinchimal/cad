@@ -138,11 +138,17 @@ The small blue squares on a selected object. Click one to move that point. See [
 ### Group
 Objects tied together so clicking one selects them all, while each stays editable. See [Group](help:group).
 
+### Handle
+A small square or cone on a selected solid in the 3D view. Drag it to stretch, lift or resize the solid.
+
 ### Hatch
 A pattern or solid fill inside a closed area. See [Hatch](help:hatch).
 
 ### Hidden line
 An edge you couldn't see from where you're looking because the part is in the way. Drawing views show them dashed.
+
+### Hole shape
+A see-through grey shape that cuts away material where it overlaps solids, once you [Combine](help:combine) them. Tinkercad calls these holes.
 
 ### HPGL
 HP-GL/2, the language of pen plotters and many vinyl and laser cutters. Colors become pen numbers.
@@ -262,6 +268,9 @@ The closed outline you extrude, revolve, sweep or loft into a solid: a cross-sec
 ### Projected view
 A drawing view lined up with another one: the top view directly above the front view, the side view beside it.
 
+### Push/Pull
+Dragging a flat face or a drawn shape in or out to add or remove material. See [Press/Pull](help:presspull).
+
 ### Radius
 The distance from a circle's center to its edge: half the diameter. Shown with R.
 
@@ -333,6 +342,9 @@ A corner point of a polyline. Plural: vertices.
 
 ### View
 The direction you're looking at the model from: plan (top), front, side or isometric.
+
+### View cube
+The cube in the top right of the 3D view. Click a face or corner to look from that side.
 
 ### Viewport
 A window on a layout sheet showing the model at a set scale. See [Viewport](help:mview).

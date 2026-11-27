@@ -92,6 +92,9 @@ class MainWindow(QMainWindow):
         from .view3d import View3D
         self.view3d = View3D(self.controller)
         self.view3d.status.connect(self._set_coords)
+        self.view3d.icon_for = lambda key: self.icons.icon(key)
+        self.view3d.run_requested.connect(self._run_with_picks)
+        self.view3d.drop_requested.connect(self.drop_shape)
         self.view_stack = QStackedWidget()
         self.view_stack.addWidget(self.canvas)
         self.view_stack.addWidget(self.view3d)
@@ -113,6 +116,7 @@ class MainWindow(QMainWindow):
         self._build_ribbon()
         self._build_status_bar()
         self._build_properties()
+        self._build_shapes_panel()
 
         self._props_timer = QTimer(self, singleShot=True, interval=0)
         self._props_timer.timeout.connect(self.properties.refresh)
@@ -249,6 +253,9 @@ class MainWindow(QMainWindow):
                              S("CONSTRAINTSTATUS", "Status")]),
         ]
         modeling = [
+            Group("Easy 3D", [Tool("SHAPESPANEL", label="Shapes"), S("DROPSHAPE", "Add Shape"),
+                              S("MAKEHOLE", "Make Hole"), S("MAKESOLID", "Make Solid"), S("COMBINE", "Combine"),
+                              S("ALIGNOBJECTS", "Align"), S("SIZE3D", "Size 3D")]),
             Group("Sketch", [Tool("SKETCH"), S("EDITSKETCH", "Edit Sketch"), S("EXITSKETCH", "Finish Sketch"),
                              S("DELSKETCH", "Delete Sketch")]),
             Group("Create", [Tool("EXTRUDE"), Tool("REVOLVE"), S("SWEEP"), S("LOFT"), S("PRESSPULL", "Press/Pull")]),
@@ -327,6 +334,53 @@ class MainWindow(QMainWindow):
         sb.addPermanentWidget(self.renderer_label)
         self._sync_toggles()
 
+    def _build_shapes_panel(self) -> None:
+        from .shapes_panel import ShapesPanel
+        self.shapes_panel = ShapesPanel(lambda k: self.icons.icon(k))
+        self.shapes_panel.shape_clicked.connect(self.start_shape)
+        self.shapes_dock = QDockWidget("Shapes", self)
+        self.shapes_dock.setObjectName("ShapesDock")
+        self.shapes_dock.setWidget(self.shapes_panel)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.shapes_dock)
+        self.shapes_dock.hide()
+
+    def start_shape(self, kind: str, hole: bool) -> None:
+        """Shapes panel click: place the shape where the user clicks next."""
+        if self.runner.is_active:
+            self.runner.cancel()
+        self.ctx.memory["dropshape_kind"] = kind
+        self.ctx.memory["dropshape_hole"] = hole
+        self.run_command("DROPSHAPE")
+
+    def drop_shape(self, kind: str, hole: bool, xyz: tuple) -> None:
+        """A shape dragged from the Shapes panel and dropped at a 3D point."""
+        if self.runner.is_active:
+            self.runner.cancel()
+        self.ctx.memory["dropshape_kind"] = kind
+        self.ctx.memory["dropshape_hole"] = hole
+        self.runner.run("DROPSHAPE")
+        self.runner.submit_point((xyz[0], xyz[1]), z=xyz[2])
+        self.runner.submit_enter()
+        self.controller._selection_updated()
+        self.view3d.setFocus()
+
+    def _run_with_picks(self, cmd: str, picks: list) -> None:
+        """A tool from the 3D view's context toolbar: the face/edge clicked is used as the first pick."""
+        if cmd.startswith("EDITSKETCH:"):
+            self.show_space("*Sketch:" + cmd.split(":", 1)[1])
+            return
+        if self.runner.is_active:
+            self.runner.cancel()
+        self.ctx.pending_picks = list(picks)
+        self.run_command(cmd)
+
+    def set_hints(self, hints: list) -> None:
+        """Ghost outlines from a tutorial step, shown in the plan and the 3D view."""
+        from PySide6.QtGui import QColor
+        col = QColor(255, 140, 0)
+        self.view3d.set_hints([(pts, col, 2.0, True) for pts in hints])
+        self.controller.set_hints([[(p[0], p[1]) for p in pts] for pts in hints])
+
     def _build_properties(self) -> None:
         self.properties = PropertiesPanel(lambda: self.doc, lambda: self.ctx.selection, dark=self.dark)
         self.props_dock = QDockWidget("Properties", self)
@@ -342,7 +396,7 @@ class MainWindow(QMainWindow):
         if then and self.runner.is_active:
             self.runner.submit_text(then)
         self.controller._after_input()
-        self.canvas.setFocus()
+        self.view_stack.currentWidget().setFocus()
 
     def _ribbon_tool(self, name: str, then) -> None:
         self.run_command(name, then)
@@ -452,6 +506,7 @@ class MainWindow(QMainWindow):
         handlers["PARAMETERS"] = self.parameters_dialog
         handlers["CONSTRAINTBAR"] = self.toggle_constraint_display
         handlers["DIMSTYLE"] = self.dimstyle_dialog
+        handlers["SHAPESPANEL"] = lambda: self.shapes_dock.setVisible(not self.shapes_dock.isVisible())
         if name.startswith("VIEW3D:"):
             self.show_3d(name.split(":", 1)[1] or None)
             return
@@ -993,6 +1048,9 @@ class MainWindow(QMainWindow):
             self.show_space("*Model")
         first = not self.in_3d
         self.view_stack.setCurrentWidget(self.view3d)
+        if first and not getattr(self, "_shapes_shown_once", False):
+            self.shapes_dock.show()                  # first time in 3D: show the Shapes panel
+            self._shapes_shown_once = True
         if preset:
             self.view3d.set_view(preset)
         elif first and not self.view3d.fitted:
@@ -1001,6 +1059,7 @@ class MainWindow(QMainWindow):
         self.view3d.setFocus()
 
     def show_plan(self) -> None:
+        self.view3d.bar.hide()
         self.view_stack.setCurrentWidget(self.canvas)
         self.canvas.setFocus()
 
@@ -1276,6 +1335,7 @@ class MainWindow(QMainWindow):
         if getattr(self, "help_window", None) is None:
             self.help_window = HelpWindow(self)
             self.help_window.run_command.connect(self._help_run)
+            self.help_window.hints_requested.connect(self.set_hints)
         hw = self.help_window
         if not hw.show_page(page_id):
             hw.show_page("home")

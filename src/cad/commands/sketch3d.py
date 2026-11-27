@@ -83,7 +83,7 @@ def _ask_plane(ctx: CommandContext):
         return STANDARD[choice]
     if choice == "Face":
         r = yield GetFace("Click a flat face of a solid", planar_only=True)
-        pl = S.face_plane(S.faces(r.entity.shape)[r.face])
+        pl = S.aligned_face_plane(S.faces(r.entity.shape)[r.face])
         if pl is None:
             ctx.echo("That face isn't flat.")
             return None

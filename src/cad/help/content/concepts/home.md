@@ -16,6 +16,7 @@ Welcome to **CAD: Calling All Dumbies**. Type in the search box above to find an
 
 ## Tutorials
 - [Draw a simple floor plan](help:tutorial-floor-plan) (feet and inches, about 20 minutes)
+- [Your first 3D part: a pencil holder](help:tutorial-easy-3d) (drag-and-drop 3D, about 10 minutes)
 - [Draw a simple machined part](help:tutorial-machined-part) (millimeters, 2D then 3D, about 25 minutes)
 
 ## How things work

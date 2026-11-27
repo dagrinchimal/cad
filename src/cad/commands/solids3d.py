@@ -62,53 +62,15 @@ def ask_solids(ctx: CommandContext, prompt: str, use_pickfirst: bool = True) -> 
     return out
 
 
-def _exact_profile_for_loop(ctx: CommandContext, loop: np.ndarray):
-    """A closed object whose outline is this loop (so circles stay true circles), or None."""
-    from ..core.geom2d.fill import loop_area
-    area = abs(loop_area(loop))
-    x0, y0 = loop.min(axis=0)
-    x1, y1 = loop.max(axis=0)
-    size = max(x1 - x0, y1 - y0, 1e-9)
-    for h in ctx.index.query((x0 - size * 0.01, y0 - size * 0.01, x1 + size * 0.01, y1 + size * 0.01)):
-        e = ctx.doc.get(h)
-        if e is None or not S.is_closed_profile(e):
-            continue
-        b = e.bbox()
-        if b is None or max(abs(b[0] - x0), abs(b[1] - y0), abs(b[2] - x1), abs(b[3] - y1)) > size * 0.01:
-            continue
-        pts = np.array([p for prim in e.primitives() for p in prim.tessellate(size * 1e-4)])
-        if len(pts) > 2 and abs(abs(loop_area(pts)) - area) <= area * 0.01:
-            return e
-    return None
-
-
-def _circle_of_loop(loop: np.ndarray):
-    """A true circle if the loop is a tessellated circle (e.g. a copy inside an array)."""
-    if len(loop) < 12:
-        return None
-    pts = loop[:-1] if np.allclose(loop[0], loop[-1]) else loop
-    c = pts.mean(axis=0)
-    r = np.linalg.norm(pts - c, axis=1)
-    if r.mean() > 0 and np.ptp(r) <= r.mean() * 2e-3:
-        return Circle(center=(float(c[0]), float(c[1])), radius=float(r.max()))
-    return None
-
-
 def area_face(ctx: CommandContext, plane: S.Plane, pt):
     """A face from the enclosed area around pt (holes included)."""
+    from ..core.regions3d import face_from_loops2d
     from .draw2 import pick_area
-    loops, size = pick_area(ctx, pt)
+    loops, _size = pick_area(ctx, pt)
     if not loops:
         raise S.SolidError("That isn't inside a closed area.")
-    wires = []
-    for lp in loops:
-        lp = np.asarray(lp, float)
-        e = _exact_profile_for_loop(ctx, lp) or _circle_of_loop(lp)
-        if e is not None:
-            wires.append(S.wire_from_entity(plane, e))
-        else:
-            wires.append(S.wire_from_loop(plane, [(float(x), float(y), 0.0) for x, y in lp]))
-    return S.face_from_wires(plane, wires[0], wires[1:])
+    ents = [ctx.doc.get(h) for h in ctx.index.query(ctx.index.extents())] if ctx.index.extents() else []
+    return face_from_loops2d(plane, loops, [e for e in ents if e is not None])
 
 
 def collect_profiles(ctx: CommandContext, verb: str):
@@ -150,6 +112,8 @@ def _touching(ctx: CommandContext, shape) -> list[Solid]:
     b = S.bbox3(shape)
     out = []
     for s in visible_solids(ctx.doc):
+        if s.hole:
+            continue
         c = S.bbox3(s.shape)
         if all(c[i] <= b[i + 3] + 1e-9 and b[i] <= c[i + 3] + 1e-9 for i in range(3)) and not ctx.doc.is_locked(s):
             out.append(s)
@@ -212,10 +176,16 @@ def extrude_cmd(ctx: CommandContext):
         return
     mode, both = "New", False
     last = ctx.memory.get("extrude_height", 10.0)
+    n = np.array(plane.normal)
+    center = S.center_of(S.compound(faces)) if len(faces) > 1 else S.center_of(faces[0])
     while True:
+        def tool(d, both=both):
+            return S.compound([S.extrude(f, abs(d) * (2 if both else 1), direction=tuple(n if d > 0 else -n),
+                                         both=both) for f in faces])
         d = yield GetDistance(f"Specify height ({mode}{', both sides' if both else ''})", positive=False,
                               default=last, default_text=format_length(last, ctx.units),
-                              keywords=kw("Both sides", "Join", "Cut", "New", "Through all"))
+                              keywords=kw("Both sides", "Join", "Cut", "New", "Through all"),
+                              drag_axis=(center, tuple(n)), preview3d=tool)
         if d == "Both sides":
             both = not both
             continue
@@ -232,7 +202,6 @@ def extrude_cmd(ctx: CommandContext):
         ctx.echo("The height can't be zero.")
         return
     ctx.memory["extrude_height"] = abs(d)
-    n = np.array(plane.normal)
     shapes = [S.extrude(f, abs(d) * (2 if both else 1), direction=tuple(n if d > 0 else -n), both=both)
               for f in faces]
     made = _apply_mode(ctx, shapes, mode)
@@ -335,7 +304,9 @@ def box_cmd(ctx: CommandContext):
         L = yield GetDistance("Specify length", base=a, positive=True)
         new_solid(ctx, S.box((a[0], a[1], z), (a[0] + L, a[1] + L, z + L)))
         return
-    h = yield GetDistance("Specify height", base=b, positive=False)
+    h = yield GetDistance("Specify height", base=b, positive=False,
+                          drag_axis=(((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, z), (0, 0, 1)),
+                          preview3d=lambda h: S.box((a[0], a[1], z), (b[0], b[1], z + h)))
     new_solid(ctx, S.box((a[0], a[1], z), (b[0], b[1], z + h)))
 
 
@@ -347,7 +318,8 @@ def cylinder_cmd(ctx: CommandContext):
     r = yield GetDistance("Specify base radius", base=c, positive=True, keywords=kw("Diameter"))
     if r == "Diameter":
         r = (yield GetDistance("Specify diameter", base=c, positive=True)) / 2
-    h = yield GetDistance("Specify height", base=c, positive=False)
+    h = yield GetDistance("Specify height", base=c, positive=False, drag_axis=((c[0], c[1], z), (0, 0, 1)),
+                          preview3d=lambda h: S.cylinder((c[0], c[1], z), r, h))
     new_solid(ctx, S.cylinder((c[0], c[1], z), r, h))
 
 
@@ -531,10 +503,30 @@ def shell_cmd(ctx: CommandContext):
          description="Click a flat face and push it in or pull it out by a distance.",
          keywords=("push pull", "move face", "thicken face", "make taller"))
 def presspull_cmd(ctx: CommandContext):
-    r = yield GetFace("Click a flat face of a solid", planar_only=True)
-    d = yield GetDistance("Specify distance (positive pulls out, negative pushes in)", positive=False)
+    from ..core.regions3d import RegionPick
+    r = yield GetFace("Click a flat face of a solid, or inside a closed shape you drew", planar_only=True,
+                      allow_region=True)
+    if isinstance(r, RegionPick):
+        face, n = r.face, np.array(r.plane.normal, float)
+        center = S.center_of(face)
+
+        def region_shape(d):
+            return S.extrude(face, abs(d), direction=tuple(n if d > 0 else -n))
+        d = yield GetDistance("Specify distance (positive pulls out, negative pushes in)", positive=False,
+                              drag_axis=(center, tuple(n)), preview3d=region_shape)
+        if abs(d) < 1e-9:
+            ctx.echo("The distance can't be zero.")
+            return
+        made = _apply_mode(ctx, [region_shape(d)], "Join" if d > 0 else "Cut")
+        if made:
+            ctx.echo("Pulled up into a solid." if d > 0 else "Pushed in.")
+        return
     f = S.faces(r.entity.shape)[r.face]
-    replace_shape(ctx, r.entity, S.presspull(r.entity.shape, f, d))
+    shape = r.entity.shape
+    d = yield GetDistance("Specify distance (positive pulls out, negative pushes in)", positive=False,
+                          drag_axis=(S.center_of(f), S.face_normal(f)),
+                          preview3d=lambda d: S.presspull(shape, f, d))
+    replace_shape(ctx, r.entity, S.presspull(shape, f, d))
 
 
 @command("SLICE", label="Slice", aliases=("SL",), group=ALL_GROUP,
