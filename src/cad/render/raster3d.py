@@ -254,11 +254,22 @@ class GLRenderer:
     name = "opengl"
 
     def __init__(self) -> None:
+        import sys
+
         import moderngl
-        try:
-            self.ctx = moderngl.create_standalone_context(require=330)
-        except Exception:
-            self.ctx = moderngl.create_standalone_context(require=330, backend="egl")
+        # On Linux use EGL: a GLX standalone context shares the X connection with Qt and can kill the
+        # program with an X error when windows close. Windows/macOS use their native backend.
+        backends = ("egl", None) if sys.platform.startswith("linux") else (None,)
+        last = None
+        for be in backends:
+            try:
+                self.ctx = (moderngl.create_standalone_context(require=330, backend=be) if be
+                            else moderngl.create_standalone_context(require=330))
+                break
+            except Exception as exc:
+                last = exc
+        else:
+            raise last
         self.prog = self.ctx.program(vertex_shader=_VS, fragment_shader=_FS)
         self._fbo = None
         self._size = (0, 0)
